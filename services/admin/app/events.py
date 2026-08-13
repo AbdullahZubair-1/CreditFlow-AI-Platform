@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aio_pika
+from sqlalchemy import select
 
 from app.db import async_session_factory
 from app.models import AuditLog, ProcessedEvent
@@ -73,6 +74,20 @@ def make_handler(source_exchange: str):
             occurred_at = datetime.now(UTC)
 
         async with async_session_factory() as session:
+            # event_id has its own unique constraint, but the generic
+            # processed_events check only guards against redelivery
+            # *after* both this commit and the outer processed_events row
+            # have landed. Without this check, a crash in between (what a
+            # forced-restart test probes) wouldn't silently duplicate the
+            # audit row on redelivery — the unique constraint would reject
+            # the second insert with an IntegrityError, which the outer
+            # consume() loop would treat as a real handler failure and
+            # retry pointlessly until it lands in the DLQ, even though the
+            # event was already correctly recorded the first time.
+            existing = await session.scalar(select(AuditLog).where(AuditLog.event_id == event_id))
+            if existing:
+                return
+
             session.add(
                 AuditLog(
                     event_id=event_id,

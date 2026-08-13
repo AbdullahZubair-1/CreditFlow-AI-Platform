@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aio_pika
+from sqlalchemy import select
 
 from app.db import async_session_factory
 from app.models import Account, AccountMember, ProcessedEvent
@@ -91,10 +92,25 @@ async def _mark_processed(event_id: str) -> None:
 
 
 async def _handle_user_registered(payload: dict[str, Any]) -> None:
+    """The generic processed_events check in py_shared.rabbitmq.consume()
+    only guards against redelivery *after* this handler's own commit and
+    the outer processed_events row have both landed — a crash in between
+    those two commits (exactly what a forced-restart test probes) would
+    otherwise redeliver this event and create a second individual Account
+    + owner membership for the same user, since nothing here checked for
+    one already existing. A brand-new user has zero memberships, so
+    "this user already has any membership at all" is a reliable,
+    same-schema signal that this handler already ran for them."""
     data = payload["data"]
     user_id = data["user_id"]
 
     async with async_session_factory() as session:
+        existing_membership = await session.scalar(
+            select(AccountMember).where(AccountMember.user_id == uuid.UUID(user_id))
+        )
+        if existing_membership:
+            return
+
         account = Account(type="individual", name=data.get("email", "Individual Account"))
         session.add(account)
         await session.flush()

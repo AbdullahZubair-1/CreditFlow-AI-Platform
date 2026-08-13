@@ -69,6 +69,13 @@ async def _maybe_emit_low_balance(account_id: uuid.UUID, balance: int) -> None:
 
 
 async def _handle_invoice_paid(payload: dict[str, Any]) -> None:
+    """The generic processed_events check only guards against redelivery
+    *after* both this handler's commit and the outer processed_events row
+    have landed — a crash in between (what a forced-restart test probes)
+    would otherwise redeliver this event and append a second
+    purchase_grant ledger row for the same invoice, double-crediting the
+    account. reference_id + reason together are this handler's own,
+    same-schema idempotency key."""
     data = payload["data"]
     account_id = uuid.UUID(data["account_id"])
     plan_tier = data.get("plan_tier", "free")
@@ -77,6 +84,14 @@ async def _handle_invoice_paid(payload: dict[str, Any]) -> None:
         return
 
     async with async_session_factory() as session:
+        already_granted = await session.scalar(
+            select(CreditsLedger).where(
+                CreditsLedger.reference_id == data["invoice_id"], CreditsLedger.reason == "purchase_grant"
+            )
+        )
+        if already_granted:
+            return
+
         entry = await append_entry(session, account_id, grant, "purchase_grant", data["invoice_id"])
         await session.commit()
 
@@ -103,6 +118,14 @@ async def _handle_refund_issued(payload: dict[str, Any]) -> None:
             )
         )
         if not granted:
+            return
+
+        already_clawed_back = await session.scalar(
+            select(CreditsLedger).where(
+                CreditsLedger.reference_id == invoice_id, CreditsLedger.reason == "refund_clawback"
+            )
+        )
+        if already_clawed_back:
             return
 
         current_balance = await get_balance(session, account_id)

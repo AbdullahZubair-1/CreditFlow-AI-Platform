@@ -65,6 +65,14 @@ async def _mark_processed(event_id: str) -> None:
 
 
 async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
+    """The generic processed_events check only guards against redelivery
+    *after* every write below and the outer processed_events row have all
+    landed. scraped_documents and scrape_jobs are two separate Mongo
+    writes (no multi-document transaction wraps them) — a crash between
+    them (what a forced-restart test probes) would leave the job at
+    status=pending and, without the check below, redelivery would re-crawl
+    and insert a second scraped_documents row for the same job rather than
+    just finishing the status update that didn't make it the first time."""
     data = payload["data"]
     scrape_job_id = data["scrape_job_id"]
     target_url = data["target_url"]
@@ -72,6 +80,14 @@ async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
     job = await mongo.scrape_jobs().find_one({"_id": scrape_job_id})
     if job and job["status"] not in ("pending", "scheduled"):
         return  # already handled (redelivery)
+
+    existing_document = await mongo.scraped_documents().find_one({"scrape_job_id": scrape_job_id})
+    if existing_document:
+        # The crawl already happened; only the status update didn't land.
+        await mongo.scrape_jobs().update_one(
+            {"_id": scrape_job_id}, {"$set": {"status": "completed", "completed_at": datetime.now(UTC)}}
+        )
+        return
 
     try:
         result = await crawl(target_url)

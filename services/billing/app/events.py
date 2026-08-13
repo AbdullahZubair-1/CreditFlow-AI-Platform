@@ -71,14 +71,23 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
     async with async_session_factory() as session:
         # Persist the raw webhook before any further processing, per the
         # reliability requirements — this is the durable write side of the
-        # flow, independent of the processed_events idempotency check.
+        # flow. It also doubles as this handler's real idempotency guard:
+        # since the insert below and every _apply_* side effect commit in
+        # this same transaction, "a SubscriptionEvent row for this
+        # stripe_event_id already exists" reliably means "everything that
+        # was ever going to happen for this event already happened,
+        # atomically" — so redelivery after a crash between this
+        # transaction committing and the outer processed_events row
+        # committing (the exact gap a forced-restart test probes) safely
+        # no-ops here instead of re-extending a dunning grace period or
+        # double-emitting payment.failed/subscription.updated.
         existing = await session.scalar(
             select(SubscriptionEvent).where(SubscriptionEvent.stripe_event_id == stripe_event_id)
         )
-        if not existing:
-            session.add(
-                SubscriptionEvent(stripe_event_id=stripe_event_id, event_type=event_type, raw_payload=event)
-            )
+        if existing:
+            return
+
+        session.add(SubscriptionEvent(stripe_event_id=stripe_event_id, event_type=event_type, raw_payload=event))
 
         if event_type == "invoice.paid":
             await _apply_invoice_paid(session, obj)

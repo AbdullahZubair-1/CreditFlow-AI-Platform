@@ -101,6 +101,25 @@ async def consume(
     processed_events table (unique constraint on event_id) so redelivery
     after a crash never double-applies an event.
 
+    IMPORTANT — what this actually guarantees, and what it doesn't:
+    `handler(payload)` runs, and only *after* it returns successfully does
+    `mark_processed(event_id)` run; only after *that* does this function's
+    `message.process()` context manager ack the message back to the
+    broker. That ordering means the processed_events check reliably
+    catches redelivery that happens *after* both of those have already
+    committed (e.g. the ack itself was lost in transit) — but it does
+    nothing for a crash that lands *between* handler's own commit and
+    mark_processed's commit (exactly what a "kill the container mid-burst"
+    reliability test will probe). In that window, is_processed() is still
+    False, so redelivery re-runs `handler` in full. Every handler passed
+    here therefore needs its own idempotency check against its own
+    schema (e.g. "does a row for this invoice_id/generation_job_id
+    already exist") — the processed_events table is necessary but not
+    sufficient on its own. Several handlers across this codebase were
+    missing that second check and got fixed during a dedicated reliability
+    pass; see each affected service's app/events.py for the specific
+    "why this check exists" comment.
+
     Native RabbitMQ x-death headers only populate once a message has
     already been dead-lettered once, so a plain reject(requeue=False) on
     first failure would skip straight to the DLQ with zero retries. Instead

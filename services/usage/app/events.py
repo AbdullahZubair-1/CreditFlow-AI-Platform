@@ -70,11 +70,27 @@ async def _mark_processed(event_id: str) -> None:
 
 
 async def _handle_generation_completed(payload: dict[str, Any]) -> None:
+    """The generic processed_events check only guards against redelivery
+    *after* both this handler's commit and the outer processed_events row
+    have landed — a crash in between (what a forced-restart test probes)
+    would otherwise redeliver this event and insert a second usage_ledger
+    row for the same generation job, permanently double-counting that
+    call's cost/tokens (the Redis counter alone would self-heal via the
+    reconciliation loop, but the durable Postgres row would not).
+    generation_job_id is this handler's own, same-schema idempotency key."""
     data = payload["data"]
     account_id = uuid.UUID(data["account_id"])
     period = redis_client.current_period()
+    generation_job_id = data.get("generation_job_id")
 
     async with async_session_factory() as session:
+        if generation_job_id:
+            already_recorded = await session.scalar(
+                select(UsageLedger).where(UsageLedger.generation_job_id == generation_job_id)
+            )
+            if already_recorded:
+                return
+
         session.add(
             UsageLedger(
                 account_id=account_id,

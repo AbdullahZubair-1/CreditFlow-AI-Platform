@@ -1,0 +1,10 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
+alembic>=1.13.0
+pydantic[email]>=2.7.0
+pydantic-settings>=2.3.0
+aio-pika>=9.4.0
+# py-shared is installed separately (see Dockerfile / local dev docs):
+#   pip install -e ../../libs/py-shared

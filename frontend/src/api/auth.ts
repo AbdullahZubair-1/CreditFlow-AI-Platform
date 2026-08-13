@@ -1,0 +1,55 @@
+import { apiFetch } from "./client";
+
+export interface TokenPair {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+export function signup(email: string, password: string) {
+  return apiFetch<{ user_id: string; email: string; dev_verification_token?: string }>("/auth/signup", {
+    method: "POST",
+    body: { email, password },
+    auth: false,
+  });
+}
+
+export function login(email: string, password: string) {
+  return apiFetch<TokenPair>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+    auth: false,
+  });
+}
+
+export function logout(accessToken: string) {
+  return apiFetch<void>("/auth/logout", {
+    method: "POST",
+    body: { access_token: accessToken },
+    auth: false,
+  });
+}
+
+export function verifyEmail(token: string) {
+  return apiFetch<void>("/auth/verify-email", {
+    method: "POST",
+    body: { token },
+    auth: false,
+  });
+}
+
+export function forgotPassword(email: string) {
+  return apiFetch<{ dev_otp?: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: { email },
+    auth: false,
+  });
+}
+
+export function resetPassword(email: string, otp: string, newPassword: string) {
+  return apiFetch<void>("/auth/reset-password", {
+    method: "POST",
+    body: { email, otp, new_password: newPassword },
+    auth: false,
+  });
+}

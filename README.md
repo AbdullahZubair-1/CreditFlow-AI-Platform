@@ -6,7 +6,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 
 - **Slice 1**: signup → email verification → login → JWT issuance → account creation → account switcher, through the Gateway, consumed by a minimal React frontend.
 - **Slice 2**: Billing Service — Stripe sandbox subscriptions/checkout/refunds via the transactional outbox pattern, with the Gateway now doing real Stripe webhook verification + relay instead of a 501 stub.
-- **Slice 3** (this pass): Credits/Marketplace Service — append-only credits ledger, credit grants on `invoice.paid`, refund clawbacks, and peer-to-peer marketplace listing/purchase settled through a one-time Stripe Checkout Session that Billing creates on Credits' behalf.
+- **Slice 3**: Credits/Marketplace Service — append-only credits ledger, credit grants on `invoice.paid`, refund clawbacks, and peer-to-peer marketplace listing/purchase settled through a one-time Stripe Checkout Session that Billing creates on Credits' behalf.
+- **Slice 4** (this pass): Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
 
 ## Architecture
 
@@ -19,6 +20,7 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                          - /me/*, /accounts/*, /invites/*    -> user-tenant service
    │                          - /billing/*                        -> billing service
    │                          - /credits/*                        -> credits service
+   │                          - /usage/*                          -> usage service
    │                          - /webhooks/stripe                  -> verifies signature, dedups via
    │                                                                 Redis SETNX, relays to RabbitMQ
    │                          - /webhooks/linkedin, /webhooks/openrouter, /sse/* -> 501 stubs (future slices)
@@ -41,12 +43,24 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │      endpoint Credits calls directly to charge a buyer for a marketplace purchase,
    │      since only Billing holds Stripe customer/credential context
    │
-   └─► credits (FastAPI, :8004) — credits_ledger, marketplace_listings, processed_events
-          (schema: credits)
-          consumes: invoice.paid (grants credits per plan_tier), refund.issued (claws
-                    back the matching grant), marketplace.payment_completed (settles a
-                    marketplace sale — debits seller, credits buyer, atomically)
-          publishes: credits.credited, credits.debited, credits.low_balance
+   ├─► credits (FastAPI, :8004) — credits_ledger, marketplace_listings, processed_events
+   │      (schema: credits)
+   │      consumes: invoice.paid (grants credits per plan_tier), refund.issued (claws
+   │                back the matching grant), marketplace.payment_completed (settles a
+   │                marketplace sale — debits seller, credits buyer, atomically)
+   │      publishes: credits.credited, credits.debited, credits.low_balance
+   │
+   └─► usage (FastAPI, :8005) — usage_ledger, account_plans, threshold_flags,
+          processed_events (schema: usage); Redis db 1 (separate from the Gateway/
+          Auth's db 0) holds the live per-account monthly token counters
+          consumes: ai.generation_completed (from the ai_events exchange — not
+                    published by anything yet; AI Generation, a later slice, will
+                    be the producer), subscription.updated (caches plan_tier locally
+                    so the hot precheck path never makes a live cross-service call)
+          publishes: usage.threshold_reached (once per account/period/threshold,
+                    guarded by threshold_flags)
+          exposes: POST /usage/precheck — the synchronous quota check the AI
+                    Generation Service will call before every generation
 
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
 ```
@@ -66,6 +80,13 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **No real payout to the seller**: the buyer's payment is real (Stripe Checkout, test mode), but nothing here transfers money to the seller's bank account — that needs Stripe Connect (connected accounts + transfers), which is out of scope for this slice's placeholder Stripe setup. The seller's ledger is credited with platform credits, not cash; documented here the same way the dunning-downgrade gap is in Billing.
 - **Event publishing here is best-effort, not outboxed**: unlike Billing, Credits publishes `credits.credited`/`credits.debited`/`credits.low_balance` directly after committing the ledger write, with a try/except that logs and moves on if RabbitMQ is unreachable. The spec's Transactional Outbox requirement is scoped explicitly to the Billing Service; the ledger write itself (the source of truth) is still fully committed and correct even if a notification is dropped.
 - **Found and fixed while building this slice**: the Gateway's Stripe webhook relay and Billing's webhook queue binding originally used the AMQP topic pattern `billing.*`, which only matches a routing key with exactly one word after `billing.` — but Stripe event types are themselves dot-separated (`invoice.paid`, `checkout.session.completed`), so the actual relayed keys have 2-3 segments and `billing.*` was silently matching **nothing**. Fixed to `billing.#` (matches zero or more words) in both places.
+
+### Usage/Metering Service notes
+
+- **Quota model is a placeholder**: per-plan-tier *monthly token* quotas (`PLAN_TOKEN_QUOTAS`: free 50k, pro 500k, team 2M) are tracked independently of the Credits Service's credit balance — Usage meters volume/rate, Credits meters spend. Whether these two should eventually be unified (e.g. quota derived from remaining credit balance instead of a separate token budget) is a product decision left open for a later pass.
+- **Two data stores, reconciled**: Redis (db 1, separate from the Gateway/Auth's rate-limit/jti Redis usage on db 0) holds the live per-account-per-month token counter that `POST /usage/precheck` reads synchronously; Postgres's `usage_ledger` is the durable, append-only source of truth written when `ai.generation_completed` is consumed. A background loop (`app/reconciliation.py`) recomputes each active account's Redis counter from the Postgres ledger every 60s, so a crash between the ledger write and the Redis increment self-heals within one interval rather than drifting forever.
+- **This slice has no producer yet**: it consumes from a new `ai_events` exchange (routing key `ai.generation_completed`) that nothing publishes to until the AI Generation Service slice exists — the consumer, queue, and DLX are all live and correctly bound, just idle. `subscription.updated` (from Billing's existing outbox) already has a real producer, so the plan-tier cache populates correctly today.
+- **Threshold detection is idempotent per period**: crossing 80% or 100% of quota emits `usage.threshold_reached` exactly once per `(account_id, period, threshold)` via a unique-constrained `threshold_flags` table — redelivery of the same `ai.generation_completed` event (caught earlier by the standard `processed_events` idempotency check) can't double-fire it, and neither can two generation calls in the same period that both push usage past 80%.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -110,13 +131,21 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 5. Send the same `checkout.session.completed` webhook twice (replay from the Stripe dashboard, or reuse a captured payload) — confirm the listing only settles once (it's a no-op the second time since it's no longer `pending_payment`) and no duplicate ledger rows appear.
 6. Kill the `credits` container mid-settlement and restart it — confirm the listing doesn't end up split between `pending_payment` and `sold` in a way that loses or double-credits currency (same forced-restart check as Slice 2, now for this service).
 
+### Verifying Slice 4 (Usage/Metering) end-to-end
+
+1. `GET /usage/precheck` (body `{"model": "gpt-4o-mini"}`, any authenticated account) returns `allowed=true`, `used_tokens=0`, `quota_tokens` matching the account's cached plan tier (defaults to `free`→50000 if `subscription.updated` hasn't fired for that account yet).
+2. Manually publish a fake `ai.generation_completed` event to the `ai_events` exchange (routing key `ai.generation_completed`, e.g. via the RabbitMQ management UI's "Publish message" on that exchange) with a body like `{"event_id": "<uuid>", "event_type": "ai.generation_completed", "data": {"account_id": "<uuid>", "model": "gpt-4o-mini", "prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300, "cost_cents": 5}}` — confirm a row appears in `usage.usage_ledger` and `redis-cli -n 1 GET usage:<account_id>:<YYYY-MM>` shows `300`.
+3. Repeat step 2 enough times to cross 80% of the account's quota — confirm exactly one `usage.threshold_reached` event is emitted (visible in the RabbitMQ management UI on the `domain_events` exchange) and one row lands in `usage.threshold_flags`; publishing more events past 100% emits a second, distinct threshold event but never re-fires the 80% one.
+4. Stop the `usage` container, manually `INCR` the Redis key to simulate drift, then restart — within ~60s the reconciliation loop should overwrite it back to match the Postgres ledger's sum for the current month.
+5. Trigger a real `subscription.updated` (e.g. upgrade a plan via `PATCH /billing/subscription`) — confirm `usage.account_plans` picks up the new `plan_tier` and a subsequent `/usage/precheck` reflects the new quota.
+
 ## Repo layout
 
 ```
 services/
-  gateway/       auth/       user-tenant/     billing/     credits/     (usage, ai-generation,
-                                                                          content, scheduler, social-publishing,
-                                                                          scraper, notification, admin — later slices)
+  gateway/  auth/  user-tenant/  billing/  credits/  usage/  (ai-generation, content, scheduler,
+                                                                social-publishing, scraper, notification,
+                                                                admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -125,6 +154,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Usage/Metering → AI Generation (+ bonus image gen) → Content → Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+AI Generation (+ bonus image gen) → Content → Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

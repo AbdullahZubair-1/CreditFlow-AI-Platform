@@ -114,6 +114,25 @@ services:
     ports:
       - "8004:8000"
 
+  usage:
+    build:
+      context: .
+      dockerfile: services/usage/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@postgres:5432/${POSTGRES_DB:-creditflow}
+      REDIS_URL: redis://redis:6379/1
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8005:8000"
+
   gateway:
     build:
       context: .
@@ -126,6 +145,7 @@ services:
       USER_TENANT_SERVICE_URL: http://user-tenant:8000
       BILLING_SERVICE_URL: http://billing:8000
       CREDITS_SERVICE_URL: http://credits:8000
+      USAGE_SERVICE_URL: http://usage:8000
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
@@ -141,6 +161,8 @@ services:
       billing:
         condition: service_started
       credits:
+        condition: service_started
+      usage:
         condition: service_started
     ports:
       - "8080:8000"

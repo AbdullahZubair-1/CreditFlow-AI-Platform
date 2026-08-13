@@ -71,6 +71,11 @@ async def proxy_credits(path: str, request: Request, identity: Identity = Depend
     return await _proxy_protected(settings.credits_service_url, path, request, identity)
 
 
+@router.api_route("/usage/{path:path}", methods=["GET", "POST"])
+async def proxy_usage(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.usage_service_url, path, request, identity)
+
+
 # --- Webhooks ---
 
 

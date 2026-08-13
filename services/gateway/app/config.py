@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     user_tenant_service_url: str = "http://user-tenant:8000"
     billing_service_url: str = "http://billing:8000"
     credits_service_url: str = "http://credits:8000"
+    usage_service_url: str = "http://usage:8000"
 
     rate_limit_per_ip_per_minute: int = 120
     rate_limit_per_account_per_minute: int = 300

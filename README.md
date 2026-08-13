@@ -13,7 +13,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 7**: Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
 - **Slice 8**: Social Publishing Service — LinkedIn OAuth 2.0/OIDC connect flow, encrypted token storage, consumes `content.scheduled` to publish text or text+image UGC posts (the bonus image-publishing feature), a token-refresh background job, and Gateway support for a truly public OAuth callback route.
 - **Slice 9**: Scraper Service — the first MongoDB-backed service, Playwright-driven crawling with robots.txt compliance and per-domain rate limiting, an internal (non-Celery) recurring-scan loop, RabbitMQ job queue (`scrape.requested` → `scrape.completed`/`scrape.failed`).
-- **Slice 10** (this pass): Notification Service — consumes nearly every domain event across the platform (across four separate exchanges) to send real transactional email via Resend, finally replacing the dev-only OTP/verification-token logging from Slice 1. Also fixes a real security gap found while wiring this up: the Gateway's catch-all proxy routes would have happily forwarded a public request straight through to any service's new internal-only `/internal/*` endpoints.
+- **Slice 10**: Notification Service — consumes nearly every domain event across the platform (across four separate exchanges) to send real transactional email via Resend, finally replacing the dev-only OTP/verification-token logging from Slice 1. Also fixes a real security gap found while wiring this up: the Gateway's catch-all proxy routes would have happily forwarded a public request straight through to any service's new internal-only `/internal/*` endpoints.
+- **Slice 11** (this pass, final backend service): Admin/Ops Service — live Redis session listing/revocation, a cross-service per-account overview, and an audit log consuming literally every exchange in the platform (topic-bound `#`). Introduces a genuine platform-level SuperAdmin concept (a new JWT claim, independent of the account-scoped `role` every other service already used) and four small `/internal/*` aggregation endpoints on other services to support it.
 
 ## Architecture
 
@@ -40,6 +41,7 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                                                                 LinkedIn's browser redirect can't carry
    │                                                                 our Authorization header)
    │                          - /scrape-jobs, /scraped-documents/*   -> scraper service
+   │                          - /admin/*                             -> admin service
    │                          - every catch-all proxy rejects any /internal/* path with 404,
    │                            regardless of destination service (see _reject_internal_paths)
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
@@ -144,6 +146,16 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
           optional: posts payment.failed/post.failed as Slack ops alerts (logs instead
           if SLACK_WEBHOOK_URL is unset)
 
+   └─► admin (FastAPI, :8012) — audit_log, processed_events (schema: admin); owns no
+          other domain data — everything else is a live read of Redis or another
+          service's new /internal/* endpoint
+          consumes: every event on every exchange in the platform (topic-bound #) →
+                    one audit_log row per event, regardless of source
+          publishes: none
+          reads directly: Redis (jti:* session keys — "sourced live from Redis" per
+                    the spec, no local mirror), User/Tenant's, Billing's, Credits', and
+                    Usage's new /internal/* endpoints for the per-account overview
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672),
        mongo (:27017, Scraper Service only)
 ```
@@ -228,6 +240,14 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Four separate exchange bindings, one shared idempotency table**: `app/events.py` declares four independent queues (one per exchange: `user_events`, `domain_events`, `billing_events`, `social_events`), each with its own routing keys and DLX, but all four route through the same `processed_events` table for idempotency — safe because `event_id` is a UUID, globally unique regardless of which exchange it arrived on.
 - **Email failures are swallowed, not retried**: unlike most consumers in this codebase, `app/notify.py`'s `send_and_log()` never re-raises on a Resend API failure — it logs the failure to `notification_log` (status=`failed`) and returns normally. Emails are treated as inherently best-effort here (there's no real harm in occasionally missing one, unlike e.g. Scheduler's `content.scheduled`), so retrying via the bounded-retry-then-DLX mechanism wasn't judged worth the added complexity for this scope.
 - **Resend and the Slack webhook are both placeholders** (`re_placeholder`, empty `SLACK_WEBHOOK_URL`) — email sends will fail against the placeholder key (logged to `notification_log` as `status=failed`, per the point above) until a real Resend API key is set; Slack alerts just log a warning instead of posting when no webhook URL is configured, so ops alerts are still visible somewhere even unconfigured.
+
+### Admin/Ops Service notes
+
+- **A genuinely new, platform-level concept had to be introduced**: every other service's JWT `role` claim (`owner`/`admin`/`member`) is account-scoped, but the spec calls for "a SuperAdmin role, platform-level, not account-scoped." That required touching the shared library every service depends on: `py_shared/jwt.py`'s `TokenClaims`/`issue_access_token()` gained an `is_superadmin` field (defaulting `False`, so every existing call site kept working unchanged); Auth's `User` model gained an `is_platform_admin` column (an operator-only flag — no signup flow sets it, flip it directly in the DB for whoever operates this platform); the Gateway's `Identity` and its `_proxy_protected()` helper now read and forward it as `X-Is-Superadmin`. `TenantAdmin` (the spec's other role, restricted to one's own account) maps onto the existing account-scoped `owner`/`admin` roles rather than inventing a third role system — see `require_access_to_account()` in `app/identity.py`.
+- **Four small `/internal/*` endpoints added elsewhere, purely to support this service**: User/Tenant's `GET /internal/accounts` (cross-account directory) and `GET /internal/accounts/{id}/summary` (name/type/plan_tier/member_count), Billing's `GET /internal/accounts/{id}/subscription`, Credits' `GET /internal/accounts/{id}/balance`, and Usage's `GET /internal/accounts/{id}/summary` — each mirrors an existing identity-scoped endpoint but takes an explicit `account_id` instead of trusting the caller's own identity, since Admin needs to read *any* account's data, not just its own. All four are unreachable from the public internet via the same `_reject_internal_paths()` mechanism Notification's slice introduced.
+- **Session listing has no secondary index**: Auth's `jti:*` Redis keys were enriched (`{"user_id":..., "account_id":...}` JSON instead of a bare user_id string) so `GET /admin/accounts/{id}/sessions` can filter by account, but there's no reverse index from account_id → jti — listing does a full `SCAN jti:*` and filters client-side. Fine at this scope's session volume; a real secondary index (or moving this to a proper session store) would matter at much larger scale.
+- **The audit consumer has no way to discover exchanges dynamically**: `AUDITED_EXCHANGES` in `app/events.py` is a hardcoded list of every topic exchange that exists across the platform today (`user_events`, `domain_events`, `billing_events`, `social_events`, `scraper_events`, `ai_events`, `webhook_events`) — RabbitMQ's client API has no "list exchanges" call without broker management permissions this service intentionally doesn't have, so a future slice that introduces a new exchange needs a one-line addition here or its events silently won't reach the audit log.
+- **One shared idempotency table across seven queues**: like Notification, all seven exchange-bound queues route through the same `processed_events` table — safe because every event's `event_id` is a UUID, globally unique regardless of which exchange or queue delivered it.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -341,20 +361,32 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 6. **Security check**: `curl http://localhost:8080/auth/internal/users/<any-uuid>` directly at the Gateway — confirm it returns `404` and never reaches Auth's actual endpoint (this was a real gap found while building this slice; confirm it stays fixed). Repeat for any other service's `/internal/*` path reachable through a Gateway catch-all.
 7. Stop the `notification` container mid-event-burst across all four exchanges (`user_events`, `domain_events`, `billing_events`, `social_events`) and restart it — confirm no duplicate emails send for any single event, and that events from all four exchanges resume being consumed (check each queue's consumer count in the RabbitMQ management UI).
 
+### Verifying Slice 11 (Admin/Ops) end-to-end — the last backend service
+
+1. Flip `is_platform_admin=true` directly in `auth.users` for a test user (no signup flow sets this, by design), log in again to get a token with `is_superadmin=true`, and confirm `GET /admin/accounts` returns every account on the platform.
+2. As that same SuperAdmin, `GET /admin/accounts/{any_account_id}/overview` for an account you don't belong to — confirm it succeeds and returns `plan_tier`, `member_count`, `subscription_status`, `credit_balance`, and `usage_this_period_tokens`/`usage_quota_tokens` all populated from four different services' new `/internal/*` endpoints.
+3. As a plain `owner`/`admin` of your *own* account (not SuperAdmin), confirm the same overview/sessions/audit-log endpoints work for your own `account_id` but return `403 forbidden` for any other account's.
+4. `GET /admin/accounts/{id}/sessions` — confirm it lists every currently active JWT for that account (matching what you'd see doing a manual `redis-cli SCAN jti:*` and filtering by account); log in from a second browser/device and confirm a new session appears.
+5. `POST /admin/sessions/{jti}/revoke` on one of those sessions — confirm the corresponding access token is immediately rejected at the Gateway with `401 invalid_token` on its next request, without waiting for natural expiry.
+6. Generate activity across several services (signup, a Stripe payment, a LinkedIn post, a scrape job) and confirm `GET /admin/audit-log` (SuperAdmin) shows all of it in one searchable timeline, each row's `source_exchange` correctly identifying which exchange it came from; confirm `GET /admin/accounts/{id}/audit-log` for a TenantAdmin only ever shows that one account's events.
+7. Kill the `admin` container mid-event-burst across all seven exchanges and restart it — confirm no duplicate `audit_log` rows for any single `event_id`, and that all seven queues resume being consumed.
+
+**This closes out all 13 backend services from the spec.** What's left, per the roadmap below, is entirely frontend fill-in, a cross-service reliability pass, and the AWS deployment bonus — no more new backend services.
+
 ## Repo layout
 
 ```
 services/
   gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  scheduler/
-    social-publishing/  scraper/  notification/  (admin — later slice)
+    social-publishing/  scraper/  notification/  admin/
 frontend/
 libs/py-shared/
 docker-compose.yml
 .env.example
 ```
 
-## Roadmap (subsequent slices)
+## Roadmap (remaining work)
 
-Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Frontend fill-in (Owner/Member dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console — the marketing/auth/onboarding pages already exist from Slice 1) → reliability hardening pass (confirm every service survives a forced consumer restart with no data loss/duplication — Definition of Done requirement, spot-checked per-service in each slice's own verification steps above, but not yet run as one dedicated pass across all thirteen at once) → AWS deployment (bonus, via the `main` branch release-PR pipeline described in the Git Workflow section).
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

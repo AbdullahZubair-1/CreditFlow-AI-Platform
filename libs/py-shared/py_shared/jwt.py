@@ -27,6 +27,12 @@ class TokenClaims:
     role: str
     jti: str
     exp: int
+    # Platform-level flag, independent of the account-scoped `role` above
+    # — added for the Admin/Ops Service's SuperAdmin console (spec: "a
+    # SuperAdmin role, platform-level, not account-scoped"). Defaults
+    # False so every existing issue_access_token() call site keeps
+    # working unchanged.
+    is_superadmin: bool = False
 
 
 def _load_key(env_var: str) -> str:
@@ -44,16 +50,21 @@ def get_public_key() -> str:
     return _load_key("JWT_PUBLIC_KEY")
 
 
-def issue_access_token(user_id: str, account_id: str, role: str) -> tuple[str, TokenClaims]:
+def issue_access_token(
+    user_id: str, account_id: str, role: str, is_superadmin: bool = False
+) -> tuple[str, TokenClaims]:
     jti = str(uuid.uuid4())
     exp = int(time.time()) + ACCESS_TOKEN_TTL_SECONDS
-    claims = TokenClaims(user_id=user_id, account_id=account_id, role=role, jti=jti, exp=exp)
+    claims = TokenClaims(
+        user_id=user_id, account_id=account_id, role=role, jti=jti, exp=exp, is_superadmin=is_superadmin
+    )
     payload: dict[str, Any] = {
         "user_id": user_id,
         "account_id": account_id,
         "role": role,
         "jti": jti,
         "exp": exp,
+        "is_superadmin": is_superadmin,
     }
     token = jwt.encode(payload, get_private_key(), algorithm=ALGORITHM)
     return token, claims

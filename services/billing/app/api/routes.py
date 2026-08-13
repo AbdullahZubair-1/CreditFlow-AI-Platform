@@ -40,6 +40,18 @@ async def list_plans() -> list[PlanResponse]:
     ]
 
 
+@router.get("/internal/accounts/{account_id}/subscription")
+async def internal_get_subscription(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Backs the Admin/Ops Service's
+    per-account overview, which needs any account's plan tier, not just
+    the caller's own (GET /subscription above is identity-scoped)."""
+    subscription = await session.scalar(select(Subscription).where(Subscription.account_id == account_id))
+    if not subscription:
+        raise ApiError("not_found", "No subscription found for this account.", 404)
+    return {"account_id": str(account_id), "plan_tier": subscription.plan_tier, "status": subscription.status}
+
+
 @router.get("/subscription", response_model=SubscriptionResponse)
 async def get_subscription(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)

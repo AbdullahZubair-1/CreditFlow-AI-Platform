@@ -34,11 +34,7 @@ async def precheck(
     )
 
 
-@router.get("/summary", response_model=UsageSummaryResponse)
-async def summary(
-    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
-) -> UsageSummaryResponse:
-    account_id = uuid.UUID(identity.account_id)
+async def _build_summary(session: AsyncSession, account_id: uuid.UUID) -> UsageSummaryResponse:
     plan_tier = await get_plan_tier(session, account_id)
     quota = get_quota(plan_tier)
 
@@ -60,10 +56,26 @@ async def summary(
     used_tokens = sum(m.total_tokens for m in by_model)
 
     return UsageSummaryResponse(
-        account_id=identity.account_id,
+        account_id=str(account_id),
         period=redis_client.current_period(),
         plan_tier=plan_tier,
         used_tokens=used_tokens,
         quota_tokens=quota,
         by_model=by_model,
     )
+
+
+@router.get("/summary", response_model=UsageSummaryResponse)
+async def summary(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> UsageSummaryResponse:
+    return await _build_summary(session, uuid.UUID(identity.account_id))
+
+
+@router.get("/internal/accounts/{account_id}/summary", response_model=UsageSummaryResponse)
+async def internal_get_summary(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> UsageSummaryResponse:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Backs the Admin/Ops Service's
+    per-account overview, which needs any account's usage, not just the
+    caller's own (GET /summary above is identity-scoped)."""
+    return await _build_summary(session, account_id)

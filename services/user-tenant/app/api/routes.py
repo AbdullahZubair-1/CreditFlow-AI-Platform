@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import events
@@ -172,6 +172,40 @@ async def remove_member(
     target = await _require_membership(session, account_id, user_id)
     await session.delete(target)
     await session.commit()
+
+
+@router.get("/internal/accounts")
+async def internal_list_accounts(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only (see the /internal/* note on the owner
+    lookup below) — backs the Admin/Ops Service's SuperAdmin-only
+    cross-account directory."""
+    rows = await session.scalars(select(Account))
+    return [
+        {"account_id": str(a.id), "name": a.name, "type": a.type, "plan_tier": a.plan_tier}
+        for a in rows.all()
+    ]
+
+
+@router.get("/internal/accounts/{account_id}/summary")
+async def internal_get_account_summary(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — backs the Admin/Ops Service's per-account
+    overview (name/type/plan_tier/member_count), one of the "read-only
+    calls" the spec describes pulling from User/Tenant, Billing, Credits,
+    and Usage."""
+    account = await session.get(Account, account_id)
+    if not account:
+        raise ApiError("not_found", "Account not found.", 404)
+
+    member_count = await session.scalar(
+        select(func.count()).select_from(AccountMember).where(AccountMember.account_id == account_id)
+    )
+    return {
+        "account_id": str(account_id),
+        "name": account.name,
+        "type": account.type,
+        "plan_tier": account.plan_tier,
+        "member_count": member_count,
+    }
 
 
 @router.get("/internal/accounts/{account_id}/owner")

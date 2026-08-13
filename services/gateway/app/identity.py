@@ -13,6 +13,7 @@ class Identity:
     account_id: str
     role: str
     jti: str
+    is_superadmin: bool = False
 
 
 async def _resolve_identity(token: str) -> Identity:
@@ -26,7 +27,11 @@ async def _resolve_identity(token: str) -> Identity:
         raise ApiError("invalid_token", "Access token has been revoked.", 401)
 
     return Identity(
-        user_id=claims["user_id"], account_id=claims["account_id"], role=claims["role"], jti=jti
+        user_id=claims["user_id"],
+        account_id=claims["account_id"],
+        role=claims["role"],
+        jti=jti,
+        is_superadmin=claims.get("is_superadmin", False),
     )
 
 

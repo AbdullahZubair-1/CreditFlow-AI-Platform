@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     scheduler_service_url: str = "http://scheduler:8000"
     social_publishing_service_url: str = "http://social-publishing:8000"
     scraper_service_url: str = "http://scraper:8000"
+    admin_service_url: str = "http://admin:8000"
 
     rate_limit_per_ip_per_minute: int = 120
     rate_limit_per_account_per_minute: int = 300

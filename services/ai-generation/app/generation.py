@@ -58,12 +58,23 @@ async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, pr
             job.total_tokens = total_tokens
             job.cost_cents = cost_cents
             job.completed_at = datetime.now(UTC)
+            purpose = job.purpose
+            user_id = str(job.user_id)
             session.add(PromptHistory(generation_job_id=job_id, prompt=prompt, response=response_text))
             await session.commit()
 
         await pubsub.publish_chunk(str(job_id), {"type": "done", "total_tokens": total_tokens})
         await events.publish_generation_completed(
-            account_id, str(job_id), model_slug, prompt_tokens, completion_tokens, total_tokens, cost_cents
+            account_id,
+            user_id,
+            str(job_id),
+            model_slug,
+            purpose,
+            response_text,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            cost_cents,
         )
 
     except Exception as exc:  # noqa: BLE001

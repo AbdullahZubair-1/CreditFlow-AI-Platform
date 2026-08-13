@@ -15,6 +15,7 @@ class GenerationJob(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="post")
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     # pending | streaming | completed | failed | cancelled
     error_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)

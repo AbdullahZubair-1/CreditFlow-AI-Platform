@@ -92,6 +92,27 @@ async def proxy_models(request: Request, identity: Identity = Depends(require_jw
     return await _proxy_protected(settings.ai_generation_service_url, "models", request, identity)
 
 
+@router.api_route("/content", methods=["GET", "POST"])
+async def proxy_content_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.content_service_url, "content", request, identity)
+
+
+@router.api_route("/content/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+async def proxy_content(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.content_service_url, f"content/{path}", request, identity)
+
+
+@router.get("/uploads/{path:path}")
+async def proxy_uploads(path: str, request: Request) -> Response:
+    # Uploaded content images are served unauthenticated, same trust level
+    # as the bonus Pollinations.ai-generated image URLs — not a security
+    # boundary, just static file serving relayed through the Gateway so
+    # the URLs Content returns resolve correctly against it.
+    if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
+        raise ApiError("rate_limited", "Too many requests from this IP.", 429)
+    return await forward(request, settings.content_service_url, f"uploads/{path}")
+
+
 # --- Webhooks ---
 
 

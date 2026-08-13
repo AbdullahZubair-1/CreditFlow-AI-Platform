@@ -8,7 +8,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 2**: Billing Service — Stripe sandbox subscriptions/checkout/refunds via the transactional outbox pattern, with the Gateway now doing real Stripe webhook verification + relay instead of a 501 stub.
 - **Slice 3**: Credits/Marketplace Service — append-only credits ledger, credit grants on `invoice.paid`, refund clawbacks, and peer-to-peer marketplace listing/purchase settled through a one-time Stripe Checkout Session that Billing creates on Credits' behalf.
 - **Slice 4**: Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
-- **Slice 5** (this pass): AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
+- **Slice 5**: AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
+- **Slice 6** (this pass): Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
 
 ## Architecture
 
@@ -23,6 +24,10 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                          - /credits/*                        -> credits service
    │                          - /usage/*                          -> usage service
    │                          - /generations, /models              -> ai-generation service
+   │                          - /content/*                         -> content service
+   │                          - /uploads/*                         -> content service (static files,
+   │                                                                 unauthenticated, same trust level
+   │                                                                 as Pollinations image URLs)
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
    │                                                                 pub/sub channel ai-generation
    │                                                                 publishes to, re-streams as SSE
@@ -78,6 +83,13 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
           publishes (best-effort, not outboxed): ai.generation_completed, ai.generation_failed
           consumes: none
 
+   └─► content (FastAPI, :8007) — content, content_versions, processed_events (schema: content);
+          manually uploaded images land on a local Docker volume, served back via a
+          StaticFiles mount — a dev stand-in for S3
+          consumes: ai.generation_completed (only "post"-purpose ones) → creates a draft
+                    Content row + its first ContentVersion snapshot
+          publishes: content.created, content.updated
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
 ```
 
@@ -114,6 +126,15 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Bonus image generation**: `POST /generations/{job_id}/image` hotlinks a Pollinations.ai URL (no API key, no upload step) rather than downloading and re-hosting the image — the Content Service (a later slice) will decide whether to keep hotlinking or mirror images into object storage.
 - **Placeholder pricing**: `cost_cents` is a flat illustrative 1¢ per 100 tokens (`CENTS_PER_100_TOKENS` in `app/generation.py`) — OpenRouter's real per-model rates vary widely and aren't wired up, same treatment as Billing's plan prices and Credits' grant amounts.
 - **Event publishing here is best-effort, not outboxed** — same tradeoff as Credits: the `generation_jobs`/`prompt_history` rows are the committed source of truth; a dropped `ai.generation_completed` publish just delays Usage's ledger entry for that call rather than losing anything permanently.
+
+### Content Service notes
+
+- **`purpose` and `response_text` were added to `ai.generation_completed` retroactively**: Slice 4 (Usage) and Slice 5 (AI Generation) shipped before Content existed, and Content needs the actual generated text plus a way to tell "this was meant to become a post" apart from other future generation purposes (ad-hoc chat, etc.) — neither was in the original event payload. `CreateGenerationRequest.purpose` (default `"post"`) and the full `response_text` were added to AI Generation's request schema, `GenerationJob` model, and completed-event payload; Usage's existing consumer ignores the new fields harmlessly (additive, non-breaking).
+- **Versioning is append-only**: every edit (including image uploads) increments `content.version` and inserts a new `content_versions` snapshot rather than mutating history — `GET /content/{id}/versions` returns the full timeline.
+- **Publish permission is role-gated**: only `owner`/`admin` can move content between `draft`→`approved`→`published` (and back to `draft`); any member can create/edit drafts. The allowed-transition table (`draft→approved`, `approved→published`, `approved→draft`, `published→draft`) is enforced server-side in `app/api/routes.py`, not just hinted at by the frontend.
+- **Local-volume "object storage"**: `POST /content/{id}/image` (multipart) writes to a Docker volume mounted at `/app/uploads` and serves it back at `/uploads/{filename}` via a `StaticFiles` mount — explicitly a dev stand-in for S3 (see `app/storage.py`'s docstring); swapping in real S3 later only touches that one file.
+- **Draft creation is idempotent by construction**: the `ai.generation_completed` consumer checks for an existing `Content` row with the same `source_generation_job_id` before creating one, on top of the standard `processed_events` idempotency check — belt-and-suspenders against redelivery.
+- **AI-generated images aren't wired into Content yet**: AI Generation's bonus `POST /generations/{job_id}/image` (Slice 5) produces a Pollinations.ai URL but nothing currently attaches it to the Content record that same generation created — a manual `PATCH /content/{id}` with that URL works today; auto-attaching it is a small fast-follow, not yet done.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -177,13 +198,23 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 7. `POST /generations/{job_id}/image` with a prompt returns a working Pollinations.ai image URL (open it in a browser — it should render an image with no auth) and a row in `ai_generation.image_generation_jobs`.
 8. Once a generation completes, confirm Usage's `usage_ledger` picks up a matching row via the `ai_events` exchange (the consumer Slice 4 built with no producer at the time) — this is the first end-to-end proof that wiring was correct.
 
+### Verifying Slice 6 (Content) end-to-end
+
+1. Run a `POST /generations` with the default `purpose: "post"` (Slice 5) through to completion — confirm a `content.content` row appears automatically with `status=draft`, `source_generation_job_id` matching the job, and a title derived from the first ~60 characters of the response; a matching `content.content_versions` row (version 1) also exists.
+2. Run a generation with `purpose` set to something else (e.g. `"chat"`) — confirm no Content row is created for it.
+3. `PATCH /content/{id}` as any member (body: `{"body": "edited text"}`) — confirm `version` increments to 2 and `GET /content/{id}/versions` shows both snapshots.
+4. As a `member` role, attempt `POST /content/{id}/status` with `{"status": "approved"}` — confirm `403 forbidden`; repeat as `owner`/`admin` — confirm it succeeds and `content.updated` is published (visible in the RabbitMQ management UI on `domain_events`).
+5. Attempt an invalid transition, e.g. `draft` → `published` directly — confirm `409 invalid_transition`.
+6. `POST /content/{id}/image` (multipart, any small image file) — confirm the returned `image_url` (e.g. `/uploads/<uuid>.jpg`) resolves to the actual image when opened through the Gateway (`http://localhost:8080/uploads/<uuid>.jpg`), and that the file persists across a `docker-compose restart content` (the `content_uploads` named volume).
+7. Kill the `content` container mid-way through consuming a burst of `ai.generation_completed` events and restart it — confirm no duplicate draft Content rows for any single `generation_job_id`.
+
 ## Repo layout
 
 ```
 services/
-  gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  (content, scheduler,
-                                                                                social-publishing, scraper,
-                                                                                notification, admin — later slices)
+  gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  (scheduler,
+                                                                                          social-publishing, scraper,
+                                                                                          notification, admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -192,6 +223,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Content → Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

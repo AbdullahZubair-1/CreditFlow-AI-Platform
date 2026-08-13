@@ -7,7 +7,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 1**: signup → email verification → login → JWT issuance → account creation → account switcher, through the Gateway, consumed by a minimal React frontend.
 - **Slice 2**: Billing Service — Stripe sandbox subscriptions/checkout/refunds via the transactional outbox pattern, with the Gateway now doing real Stripe webhook verification + relay instead of a 501 stub.
 - **Slice 3**: Credits/Marketplace Service — append-only credits ledger, credit grants on `invoice.paid`, refund clawbacks, and peer-to-peer marketplace listing/purchase settled through a one-time Stripe Checkout Session that Billing creates on Credits' behalf.
-- **Slice 4** (this pass): Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
+- **Slice 4**: Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
+- **Slice 5** (this pass): AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
 
 ## Architecture
 
@@ -21,9 +22,15 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                          - /billing/*                        -> billing service
    │                          - /credits/*                        -> credits service
    │                          - /usage/*                          -> usage service
+   │                          - /generations, /models              -> ai-generation service
+   │                          - /sse/{job_id}                      -> subscribes to the same Redis
+   │                                                                 pub/sub channel ai-generation
+   │                                                                 publishes to, re-streams as SSE
    │                          - /webhooks/stripe                  -> verifies signature, dedups via
    │                                                                 Redis SETNX, relays to RabbitMQ
-   │                          - /webhooks/linkedin, /webhooks/openrouter, /sse/* -> 501 stubs (future slices)
+   │                          - /webhooks/linkedin, /webhooks/openrouter -> 501 stubs (OpenRouter's stays
+   │                                                                 permanent — chat completions have no
+   │                                                                 webhook delivery model to receive from)
    ├─► auth (FastAPI, :8001)        — users, credentials, refresh_tokens,
    │      email_verification_tokens, password_reset_tokens (schema: auth)
    │      publishes: user.registered, user.logged_in, user.password_reset_requested
@@ -62,6 +69,15 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
           exposes: POST /usage/precheck — the synchronous quota check the AI
                     Generation Service will call before every generation
 
+   └─► ai-generation (FastAPI, :8006) — generation_jobs, prompt_history,
+          image_generation_jobs (bonus) (schema: ai_generation)
+          calls Usage's /precheck synchronously before accepting a generation request,
+          then OpenRouter's streaming chat completions endpoint
+          publishes each token chunk to Redis pub/sub (channel `generation:{job_id}`)
+          for the Gateway's /sse/{job_id} to re-stream to the frontend
+          publishes (best-effort, not outboxed): ai.generation_completed, ai.generation_failed
+          consumes: none
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
 ```
 
@@ -87,6 +103,17 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Two data stores, reconciled**: Redis (db 1, separate from the Gateway/Auth's rate-limit/jti Redis usage on db 0) holds the live per-account-per-month token counter that `POST /usage/precheck` reads synchronously; Postgres's `usage_ledger` is the durable, append-only source of truth written when `ai.generation_completed` is consumed. A background loop (`app/reconciliation.py`) recomputes each active account's Redis counter from the Postgres ledger every 60s, so a crash between the ledger write and the Redis increment self-heals within one interval rather than drifting forever.
 - **This slice has no producer yet**: it consumes from a new `ai_events` exchange (routing key `ai.generation_completed`) that nothing publishes to until the AI Generation Service slice exists — the consumer, queue, and DLX are all live and correctly bound, just idle. `subscription.updated` (from Billing's existing outbox) already has a real producer, so the plan-tier cache populates correctly today.
 - **Threshold detection is idempotent per period**: crossing 80% or 100% of quota emits `usage.threshold_reached` exactly once per `(account_id, period, threshold)` via a unique-constrained `threshold_flags` table — redelivery of the same `ai.generation_completed` event (caught earlier by the standard `processed_events` idempotency check) can't double-fire it, and neither can two generation calls in the same period that both push usage past 80%.
+
+### AI Generation Service notes
+
+- **OpenRouter credentials are a placeholder** (`sk-or-placeholder`) — the streaming client code path is fully wired but needs a real key from [openrouter.ai/keys](https://openrouter.ai/keys) to actually reach a model. Two model choices are pre-configured (`fast` → Llama 3.1 8B Instruct, `quality` → GPT-4o mini via OpenRouter) and selectable by key name (`"fast"`/`"quality"`) rather than raw OpenRouter model slugs, so the frontend never has to know the underlying slug.
+- **Streaming path**: `POST /generations` synchronously calls Usage's `/precheck` first (rejecting with `429 quota_exceeded` if over quota), then creates a `generation_jobs` row and kicks off a FastAPI `BackgroundTask` that streams from OpenRouter, publishing each token to a Redis pub/sub channel (`generation:{job_id}`) as it arrives. The Gateway's `/sse/{job_id}` subscribes to that same channel and re-streams it to the browser as Server-Sent Events — the Gateway never talks to OpenRouter directly, it's a pure relay.
+- **EventSource can't set headers**: browsers' native `EventSource` API has no way to attach an `Authorization` header, so `/sse/{job_id}` is the one Gateway route that also accepts the access token via `?access_token=` query string (see `require_jwt_from_header_or_query` in `services/gateway/app/identity.py`) — every other protected route still requires the header only. The Gateway also confirms the caller actually owns the job (via AI Generation's existing per-account-scoped `GET /generations/{job_id}`) before subscribing, even though `job_id` is an unguessable UUID.
+- **Known race, not fully solved**: a generation's background task can in principle start publishing tokens before the frontend's SSE `EventSource` has finished subscribing, since Redis pub/sub delivers only to subscribers already attached with no replay buffer. In practice OpenRouter's network round-trip means this hasn't been observed to matter, but it's a real gap, not a proven-safe design — a fix (e.g. buffering early tokens in a short-lived Redis list until first subscriber attaches) is a candidate fast-follow if it turns out to matter.
+- **Cancellation** is cooperative: `POST /generations/{job_id}/cancel` just sets a Redis flag; the streaming loop checks it between chunks and stops, persisting whatever partial response had accumulated with `status=cancelled`. There's necessarily a small window where a chunk already in flight from OpenRouter still gets published after cancellation is requested.
+- **Bonus image generation**: `POST /generations/{job_id}/image` hotlinks a Pollinations.ai URL (no API key, no upload step) rather than downloading and re-hosting the image — the Content Service (a later slice) will decide whether to keep hotlinking or mirror images into object storage.
+- **Placeholder pricing**: `cost_cents` is a flat illustrative 1¢ per 100 tokens (`CENTS_PER_100_TOKENS` in `app/generation.py`) — OpenRouter's real per-model rates vary widely and aren't wired up, same treatment as Billing's plan prices and Credits' grant amounts.
+- **Event publishing here is best-effort, not outboxed** — same tradeoff as Credits: the `generation_jobs`/`prompt_history` rows are the committed source of truth; a dropped `ai.generation_completed` publish just delays Usage's ledger entry for that call rather than losing anything permanently.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -139,13 +166,24 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 4. Stop the `usage` container, manually `INCR` the Redis key to simulate drift, then restart — within ~60s the reconciliation loop should overwrite it back to match the Postgres ledger's sum for the current month.
 5. Trigger a real `subscription.updated` (e.g. upgrade a plan via `PATCH /billing/subscription`) — confirm `usage.account_plans` picks up the new `plan_tier` and a subsequent `/usage/precheck` reflects the new quota.
 
+### Verifying Slice 5 (AI Generation) end-to-end
+
+1. With a real `OPENROUTER_API_KEY` in `.env`, `GET /models` (through the Gateway) returns `{"fast": "...", "quality": "..."}`; `POST /generations` with `{"prompt": "...", "model": "fast"}` returns `202` and a `job_id` immediately (before generation finishes).
+2. Open `GET /sse/{job_id}?access_token=<access_token>` (a plain browser tab or `curl -N` works — it's SSE, not WebSocket) and confirm `data: {"type":"token",...}` lines arrive token-by-token, followed by a terminal `data: {"type":"done",...}` line that ends the stream.
+3. `GET /generations/{job_id}` (through the Gateway, header auth) shows `status=completed`, the full accumulated `response`, and non-zero `total_tokens`/`cost_cents`; a matching row exists in `ai_generation.generation_jobs` and `ai_generation.prompt_history`.
+4. Without a real OpenRouter key (placeholder), confirm the job instead ends with `status=failed` and a populated `error_reason`, and that `GET /sse/{job_id}` correctly terminates on the `data: {"type":"error",...}` message rather than hanging.
+5. Start a generation, then immediately call `POST /generations/{job_id}/cancel` — confirm the job settles at `status=cancelled` with whatever partial response had streamed so far, and the SSE stream terminates on a `data: {"type":"cancelled"}` message.
+6. Exceed the account's Usage quota (Slice 4), then call `POST /generations` again — confirm it's rejected with `429 quota_exceeded` before any OpenRouter call is made.
+7. `POST /generations/{job_id}/image` with a prompt returns a working Pollinations.ai image URL (open it in a browser — it should render an image with no auth) and a row in `ai_generation.image_generation_jobs`.
+8. Once a generation completes, confirm Usage's `usage_ledger` picks up a matching row via the `ai_events` exchange (the consumer Slice 4 built with no producer at the time) — this is the first end-to-end proof that wiring was correct.
+
 ## Repo layout
 
 ```
 services/
-  gateway/  auth/  user-tenant/  billing/  credits/  usage/  (ai-generation, content, scheduler,
-                                                                social-publishing, scraper, notification,
-                                                                admin — later slices)
+  gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  (content, scheduler,
+                                                                                social-publishing, scraper,
+                                                                                notification, admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -154,6 +192,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-AI Generation (+ bonus image gen) → Content → Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Content → Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

@@ -15,7 +15,20 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _reject_internal_paths(path: str) -> None:
+    # Every service reserves an /internal/* namespace for direct
+    # service-to-service calls that skip Gateway auth entirely (email
+    # lookups, account-owner lookups, etc. — see e.g. Auth's
+    # GET /internal/users/{id}). Catch-all proxy routes like
+    # /auth/{path:path} would otherwise happily forward those paths to
+    # the public internet unauthenticated, since they match on prefix
+    # alone. Pretend they don't exist rather than relay them.
+    if path == "internal" or path.startswith("internal/"):
+        raise ApiError("not_found", "Not found.", 404)
+
+
 async def _proxy_protected(service_url: str, path: str, request: Request, identity: Identity) -> Response:
+    _reject_internal_paths(path)
     if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
         raise ApiError("rate_limited", "Too many requests from this IP.", 429)
     if not await redis_client.check_rate_limit(
@@ -37,6 +50,7 @@ async def _proxy_protected(service_url: str, path: str, request: Request, identi
 
 @router.api_route("/auth/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_auth(path: str, request: Request) -> Response:
+    _reject_internal_paths(path)
     if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
         raise ApiError("rate_limited", "Too many requests from this IP.", 429)
     return await forward(request, settings.auth_service_url, path)

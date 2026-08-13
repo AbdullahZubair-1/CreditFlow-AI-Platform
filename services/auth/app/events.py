@@ -29,11 +29,16 @@ def _envelope(routing_key: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def publish_user_registered(user_id: str, email: str) -> None:
+async def publish_user_registered(user_id: str, email: str, verification_token: str) -> None:
     channel = await get_channel()
     await publish_event(channel, EXCHANGE, "user.registered", _envelope("user.registered", {
         "user_id": user_id,
         "email": email,
+        # added for the Notification Service to build a working
+        # verification link — the spec calls for exactly this ("generate
+        # verification token, emit event for Notification Service to send
+        # the email"), which the event payload didn't carry until now.
+        "verification_token": verification_token,
     }))
 
 

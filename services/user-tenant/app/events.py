@@ -62,6 +62,23 @@ async def publish_member_joined(account_id: str, user_id: str, role: str) -> Non
     )
 
 
+async def publish_invite_created(invite_id: str, account_id: str, email: str, token: str, role: str) -> None:
+    """Added retroactively for the Notification Service — the spec's
+    "Team invite flow: generate invite token, emit event for Notification
+    Service to email the invitee" was never actually wired to publish
+    anything until Notification existed to consume it."""
+    channel = await get_channel()
+    await publish_event(
+        channel,
+        DOMAIN_EVENTS_EXCHANGE,
+        "invite.created",
+        _envelope(
+            "invite.created",
+            {"invite_id": invite_id, "account_id": account_id, "email": email, "token": token, "role": role},
+        ),
+    )
+
+
 async def _is_processed(event_id: str) -> bool:
     async with async_session_factory() as session:
         return await session.get(ProcessedEvent, event_id) is not None

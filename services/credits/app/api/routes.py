@@ -31,6 +31,16 @@ async def get_my_balance(
     return BalanceResponse(account_id=identity.account_id, balance=balance)
 
 
+@router.get("/internal/accounts/{account_id}/balance")
+async def internal_get_balance(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Backs the Admin/Ops Service's
+    per-account overview, which needs any account's balance, not just
+    the caller's own (GET /balance above is identity-scoped)."""
+    balance = await get_balance(session, account_id)
+    return {"account_id": str(account_id), "balance": balance}
+
+
 @router.get("/transactions", response_model=list[LedgerEntryResponse])
 async def list_my_transactions(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)

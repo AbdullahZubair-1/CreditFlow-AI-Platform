@@ -309,6 +309,29 @@ services:
     ports:
       - "8011:8000"
 
+  admin:
+    build:
+      context: .
+      dockerfile: services/admin/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@postgres:5432/${POSTGRES_DB:-creditflow}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      REDIS_URL: redis://redis:6379/0
+      USER_TENANT_SERVICE_URL: http://user-tenant:8000
+      BILLING_SERVICE_URL: http://billing:8000
+      CREDITS_SERVICE_URL: http://credits:8000
+      USAGE_SERVICE_URL: http://usage:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8012:8000"
+
   gateway:
     build:
       context: .
@@ -327,6 +350,7 @@ services:
       SCHEDULER_SERVICE_URL: http://scheduler:8000
       SOCIAL_PUBLISHING_SERVICE_URL: http://social-publishing:8000
       SCRAPER_SERVICE_URL: http://scraper:8000
+      ADMIN_SERVICE_URL: http://admin:8000
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
@@ -354,6 +378,8 @@ services:
       scheduler:
         condition: service_started
       social-publishing:
+        condition: service_started
+      admin:
         condition: service_started
     ports:
       - "8080:8000"

@@ -14,6 +14,11 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Platform-level, independent of any account-scoped role — grants
+    # access to the Admin/Ops Service's cross-account SuperAdmin console.
+    # No signup flow sets this; it's an operator flag only (flip it
+    # directly in the DB for the person operating this platform).
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     credential: Mapped["Credential"] = relationship(back_populates="user", uselist=False)

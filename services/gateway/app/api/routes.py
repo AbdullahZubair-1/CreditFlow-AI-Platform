@@ -44,6 +44,7 @@ async def _proxy_protected(service_url: str, path: str, request: Request, identi
             "X-User-Id": identity.user_id,
             "X-Account-Id": identity.account_id,
             "X-Role": identity.role,
+            "X-Is-Superadmin": "true" if identity.is_superadmin else "false",
         },
     )
 
@@ -165,6 +166,11 @@ async def proxy_scrape_jobs(path: str, request: Request, identity: Identity = De
 @router.get("/scraped-documents/{path:path}")
 async def proxy_scraped_documents(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
     return await _proxy_protected(settings.scraper_service_url, f"scraped-documents/{path}", request, identity)
+
+
+@router.api_route("/admin/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+async def proxy_admin(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.admin_service_url, f"admin/{path}", request, identity)
 
 
 @router.get("/uploads/{path:path}")

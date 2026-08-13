@@ -1,3 +1,5 @@
+import json
+
 import redis.asyncio as redis
 
 from app.config import settings
@@ -13,8 +15,14 @@ def get_client() -> redis.Redis:
     return _client
 
 
-async def store_jti(jti: str, user_id: str) -> None:
-    await get_client().set(f"jti:{jti}", user_id, ex=ACCESS_TOKEN_TTL_SECONDS)
+async def store_jti(jti: str, user_id: str, account_id: str) -> None:
+    # Stored as JSON (not a bare user_id string) so the Admin/Ops
+    # Service's "list active sessions per account" view (which SCANs
+    # jti:* directly, sourced live from Redis per the spec) can filter by
+    # account_id without a second index to keep in sync.
+    await get_client().set(
+        f"jti:{jti}", json.dumps({"user_id": user_id, "account_id": account_id}), ex=ACCESS_TOKEN_TTL_SECONDS
+    )
 
 
 async def is_jti_active(jti: str) -> bool:

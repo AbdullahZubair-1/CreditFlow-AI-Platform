@@ -94,8 +94,8 @@ async def login(
     account_id = str(user.id)
     role = "owner"
 
-    access_token, claims = issue_access_token(str(user.id), account_id, role)
-    await redis_client.store_jti(claims.jti, str(user.id))
+    access_token, claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
+    await redis_client.store_jti(claims.jti, str(user.id), account_id)
 
     refresh_token, refresh_jti = issue_refresh_token(str(user.id))
     session.add(
@@ -139,8 +139,8 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     account_id = str(user.id)
     role = "owner"
 
-    access_token, access_claims = issue_access_token(str(user.id), account_id, role)
-    await redis_client.store_jti(access_claims.jti, str(user.id))
+    access_token, access_claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
+    await redis_client.store_jti(access_claims.jti, str(user.id), account_id)
 
     new_refresh_token, new_refresh_jti = issue_refresh_token(str(user.id))
     session.add(

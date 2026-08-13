@@ -53,3 +53,11 @@ export function resetPassword(email: string, otp: string, newPassword: string) {
     auth: false,
   });
 }
+
+export function switchAccount(accessToken: string, accountId: string) {
+  return apiFetch<TokenPair>("/auth/switch-account", {
+    method: "POST",
+    body: { access_token: accessToken, account_id: accountId },
+    auth: false,
+  });
+}

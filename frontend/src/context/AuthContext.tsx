@@ -9,6 +9,7 @@ interface AuthContextValue {
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  switchAccount: (accountId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -41,9 +42,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setTokens(null, null);
   }, []);
 
+  const switchAccount = useCallback(async (accountId: string) => {
+    const token = getAccessToken();
+    if (!token) throw new Error("Not authenticated");
+    const tokens = await authApi.switchAccount(token, accountId);
+    setTokens(tokens.access_token, tokens.refresh_token);
+  }, []);
+
   const value = useMemo(
-    () => ({ claims, isAuthenticated: claims !== null, login, logout }),
-    [claims, login, logout]
+    () => ({ claims, isAuthenticated: claims !== null, login, logout, switchAccount }),
+    [claims, login, logout, switchAccount]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

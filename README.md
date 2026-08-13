@@ -385,8 +385,32 @@ docker-compose.yml
 .env.example
 ```
 
+## Slice 12: Frontend fill-in
+
+Fills in every page the spec calls for beyond Slice 1's marketing/auth/onboarding skeleton: Owner Dashboard, Team Management, Billing & Invoices, Credits & Marketplace (all Owner-only), Content Studio with real SSE streaming, Calendar/Scheduler, LinkedIn Connections (Owner + Member), and a SuperAdmin Console. Also fixes the Slice 1 placeholder `account_id` bug (see the "Fixed since Slice 1" note above) — nearly every page in this slice would have broken against it otherwise.
+
+### Notes
+
+- **No Node.js/npm in the environment this was built in** — the same constraint noted for Slices 1 onward. Every new/changed file was reviewed by hand: cross-checking every `apiFetch()` call's path and HTTP method against the actual Gateway proxy route and backend endpoint it hits, and every TypeScript interface's fields against the corresponding Pydantic response model, rather than relying on `tsc`/a dev-server round-trip to catch drift. Run `npm install && npm run dev` (or `docker-compose up`) on a machine with Node to type-check and click through this for real before treating it as verified.
+- **No new npm dependencies were added.** The spec's calendar suggestions (FullCalendar, React Big Calendar) weren't pulled in, since a new dependency can't be installed-and-verified without Node available — `CalendarScheduler.tsx` is a small hand-rolled month grid instead, functionally equivalent for this scope (click a day, see what's scheduled, create/reschedule/cancel) but without drag-and-drop or week view.
+- **Account Switcher now does what the spec asks**: selecting a different account calls the new `POST /auth/switch-account` (added alongside the account_id fix) and replaces both tokens — previously it only displayed accounts without actually switching context.
+- **Route guards are UX only, not a security boundary** — `OwnerRoute`/`SuperAdminRoute` (new, alongside the existing `ProtectedRoute`) redirect away from pages a role shouldn't see, but every real authorization check happens server-side per the spec's explicit framing ("the frontend restriction is a UX convenience, not a security boundary"); a `member` calling an owner-only backend endpoint directly still gets `403` regardless of what the frontend shows.
+- **Confirmation dialogs**: a new shared `ConfirmDialog` component gates every destructive action the spec calls out by name — revoking a session, removing a team member, cancelling a scheduled post — plus a couple more in the same spirit (deleting content, cancelling a marketplace listing, disconnecting LinkedIn).
+- **Content Studio's "save as draft" is implicit, not a button**: every AI generation with the default `purpose: "post"` already becomes a draft automatically server-side (Slice 6's `ai.generation_completed` → `content.created` flow) — there's no separate "save" step to wire up; the page's Drafts list is just `GET /content` filtered client-side to non-published items.
+- **A known minor gap, not fixed here**: `AcceptInvite.tsx`'s "log in first" redirect doesn't carry the invite token back through login — a user who isn't already authenticated has to click the emailed invite link again after logging in, rather than resuming automatically. `LoginRequest`/`Login.tsx` don't currently support a post-login redirect target.
+
+### Verifying Slice 12 (Frontend) end-to-end
+
+1. `docker-compose up --build`, then walk the full loop in a browser: sign up → verify (dev token from Slice 1) → create/join a team → land on the Owner Dashboard and confirm plan tier/credit balance/team size/usage all populate from four different backend calls.
+2. Generate a post in the Content Studio and watch tokens stream in live (open the Network tab — confirm it's an `EventSource`/SSE connection to `/sse/{job_id}`, not polling); confirm the resulting draft appears in the Drafts list without any extra "save" action.
+3. Schedule that draft on the Calendar for a near-future time with `recurrence: "weekly"` — confirm it appears in the correct day cell, and that Reschedule/Cancel only show up while `status=scheduled`.
+4. Connect a real LinkedIn Developer App via LinkedIn Connections, then let the scheduled post fire — confirm the Publish History table shows it, and that a real image attaches if the content has one.
+5. As an Owner, invite a teammate from Team Management (dev invite token since Resend is a placeholder), accept it in another browser/incognito session, and confirm the new member can reach Content Studio/Calendar/LinkedIn but gets redirected away from Team/Billing/Credits.
+6. Switch between two accounts via the Account Switcher and confirm the Dashboard/Content Studio data actually changes to match — not just the dropdown label.
+7. Flip `is_platform_admin=true` for a test user directly in Postgres, log in again, and confirm the SuperAdmin Console nav item appears and the console lets you browse any account's overview/sessions/audit log, while a non-SuperAdmin owner is redirected away from `/admin` entirely.
+
 ## Roadmap (remaining work)
 
-Frontend fill-in (Owner/Member dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console — the marketing/auth/onboarding pages already exist from Slice 1) → reliability hardening pass (confirm every service survives a forced consumer restart with no data loss/duplication — Definition of Done requirement, spot-checked per-service in each slice's own verification steps above, but not yet run as one dedicated pass across all thirteen at once) → AWS deployment (bonus, via the `main` branch release-PR pipeline described in the Git Workflow section).
+Reliability hardening pass (confirm every service survives a forced consumer restart with no data loss/duplication — Definition of Done requirement, spot-checked per-service in each slice's own verification steps above, but not yet run as one dedicated pass across all thirteen at once) → AWS deployment (bonus, via the `main` branch release-PR pipeline described in the Git Workflow section).
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

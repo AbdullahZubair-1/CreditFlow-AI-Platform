@@ -10,7 +10,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 4**: Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
 - **Slice 5**: AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
 - **Slice 6**: Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
-- **Slice 7** (this pass): Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
+- **Slice 7**: Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
+- **Slice 8** (this pass): Social Publishing Service — LinkedIn OAuth 2.0/OIDC connect flow, encrypted token storage, consumes `content.scheduled` to publish text or text+image UGC posts (the bonus image-publishing feature), a token-refresh background job, and Gateway support for a truly public OAuth callback route.
 
 ## Architecture
 
@@ -30,6 +31,12 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                                                                 unauthenticated, same trust level
    │                                                                 as Pollinations image URLs)
    │                          - /scheduled, /scheduled/*            -> scheduler service
+   │                          - /social/linkedin/connect,
+   │                            /social/connections,
+   │                            /social/publish-jobs                -> social-publishing service (protected)
+   │                          - /social/linkedin/callback            -> social-publishing service (PUBLIC —
+   │                                                                 LinkedIn's browser redirect can't carry
+   │                                                                 our Authorization header)
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
    │                                                                 pub/sub channel ai-generation
    │                                                                 publishes to, re-streams as SSE
@@ -102,6 +109,13 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
                     scheduling validates a content_id without a live cross-service call)
           publishes: content.scheduled — deliberately NOT best-effort (see notes below)
 
+   └─► social-publishing (FastAPI, :8009) — social_connections (Fernet-encrypted tokens),
+          publish_jobs, post_media, processed_events (schema: social_publishing)
+          consumes: content.scheduled → fetches the post from Content, uploads its
+                    image via LinkedIn's Assets API if present, publishes a UGC post
+          publishes: post.published, post.failed
+          background job: refreshes LinkedIn access tokens ahead of expiry
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
 ```
 
@@ -156,6 +170,16 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **`content.scheduled` publish failures are NOT swallowed here** — a deliberate exception to this codebase's usual "best-effort, log and continue" pattern for non-Billing event publishing (see Credits/AI Generation/Content's notes above). If the publish raises, `app/tasks.py` never commits the "fired" state change; the occurrence stays `status=scheduled` and gets retried on the next scan once the lock expires. Losing this specific event would mean a post silently never reaches Social Publishing, which is worse than a delayed retry.
 - **Content ownership cache, not a live check**: `POST /scheduled` validates `content_id` against a local `available_content` table populated by consuming `content.created`, rather than calling the Content Service directly — matches the spec's framing that Scheduler "knows what is available to schedule" from that event, and avoids a cross-service call on every schedule request. It does mean a content item briefly won't be schedulable if Scheduler's consumer hasn't processed its `content.created` event yet (normally sub-second).
 - **No cross-service content details on the calendar view**: `GET /scheduled` returns `content_id`, not the post's title/body — fetching that is left to the frontend calling Content directly, rather than Scheduler doing an N+1 fan-out of cross-service calls per calendar render.
+
+### Social Publishing Service notes
+
+- **LinkedIn credentials are placeholders** (`linkedin-client-id/secret-placeholder`) — per the spec, every developer registers their own LinkedIn Developer App for local testing (LinkedIn issues API access per app, not shared across a team), enabling the "Sign In with LinkedIn using OpenID Connect" and "Share on LinkedIn" products with scopes `openid profile email w_member_social`. `LINKEDIN_REDIRECT_URI` must exactly match a redirect URL registered on that app.
+- **The OAuth callback is genuinely public, by necessity**: LinkedIn's browser redirect back to `/social/linkedin/callback` can't carry an `Authorization` header, so unlike almost every other route in this platform, the Gateway proxies it unauthenticated. The caller's identity instead travels in a signed `state` param — `POST /social/linkedin/connect` (a normal protected route) creates it via a dedicated Fernet key (`OAUTH_STATE_KEY`, separate from the key used to encrypt stored tokens) with a 10-minute TTL baked into the Fernet token itself, and the callback verifies+decrypts it to recover `account_id`/`user_id` with no database lookup needed.
+- **Tokens are encrypted at rest** (Fernet, `TOKEN_ENCRYPTION_KEY`) — `social_connections.access_token_encrypted`/`refresh_token_encrypted` are never stored in plaintext; they're only decrypted in memory for the duration of an outbound LinkedIn API call (`app/crypto.py`).
+- **Image publishing (bonus)**: when `content.scheduled` resolves to a post with an `image_url`, the consumer registers an upload via LinkedIn's Assets API, downloads the image bytes (from Content's `/uploads/*` or a Pollinations.ai URL — either works, it's just an HTTP GET), `PUT`s them to LinkedIn's returned upload URL, and references the resulting asset URN in the UGC post payload — producing a text+image post instead of text-only, exactly as the bonus feature describes.
+- **Retry semantics split on failure type**: a transient LinkedIn failure (rate limit, 5xx, network error) re-raises out of the consumer, which lets `py_shared.rabbitmq`'s existing bounded-retry-then-DLX mechanism handle it (no separate custom backoff timer — the platform-wide mechanism already covers "retry with backoff... route to DLQ after max attempts"). A permanent failure (no LinkedIn connection, content deleted) is caught locally, recorded, and emits `post.failed` immediately without retrying — retrying something that will fail identically every time would just waste the bounded-retry budget.
+- **Token refresh is honest about a real LinkedIn constraint**: `app/token_refresh.py` runs hourly and refreshes any connection with a stored `refresh_token`, but LinkedIn's default 3-legged OAuth token doesn't grant refresh tokens unless your specific Developer App has been approved for that capability — most test/local apps won't have it. Connections without a `refresh_token` just log a warning near expiry rather than erroring; the user will need to reconnect once the (typically ~60-day) access token actually expires.
+- **Cross-service content fetch, not an event payload**: `content.scheduled`'s payload only carries `content_id` (not the post text), so the consumer calls Content's `GET /content/{id}` directly (service-to-service, bypassing the Gateway) rather than requiring Content to duplicate its own data into every event — same pattern as Credits calling Billing.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -240,12 +264,22 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 7. Stop `rabbitmq` (or block network to it) right as a post becomes due, let Beat's scan attempt fire, then restore connectivity — confirm the post is still `status=scheduled` (not incorrectly marked `fired`) and the *next* scan successfully fires it once the lock (55s TTL) has expired.
 8. Schedule two posts for the same `publish_at`, then manually run two overlapping scans in quick succession (e.g. trigger the Celery task twice back-to-back) — confirm each post only ends up firing (and emitting `content.scheduled`) once, not twice.
 
+### Verifying Slice 8 (Social Publishing) end-to-end
+
+1. With a real LinkedIn Developer App configured (Client ID/Secret, redirect URI registered exactly matching `LINKEDIN_REDIRECT_URI`), `POST /social/linkedin/connect` returns an `authorize_url`; opening it, approving the requested scopes, and being redirected back should land on `FRONTEND_CONNECTIONS_URL?connected=true` with a new `social_publishing.social_connections` row (encrypted tokens — confirm the stored value isn't your plaintext access token if you peek at the DB).
+2. `GET /social/connections` reflects `connected=true` with the right `linkedin_member_urn` and `expires_at`; `DELETE /social/connections` removes it and a subsequent `GET` reflects `connected=false`.
+3. Schedule a piece of content with no image (Slice 6 + 7) for a near-future time — once Scheduler fires it, confirm a text-only UGC post appears on the connected LinkedIn account, a `publish_jobs` row shows `status=published` with a real `linkedin_post_id`, and `post.published` is visible on the RabbitMQ management UI's `social_events` exchange (its own dedicated exchange, matching Billing's `billing_events` — the `content.scheduled` it consumed to trigger this still comes in via the shared `domain_events` exchange).
+4. Repeat with a piece of content that has an `image_url` (either a manually uploaded Content image or an AI-generated Pollinations.ai one) — confirm the resulting LinkedIn post has an attached image (not text-only), and a `post_media` row records the LinkedIn asset URN.
+5. Schedule content for an account with **no** LinkedIn connection — confirm the `publish_jobs` row goes straight to `status=failed` with a clear `error_reason`, `post.failed` is emitted, and — importantly — it does **not** get retried (check the DLQ/retry count stays at 0, since this is a permanent failure).
+6. Temporarily point `LINKEDIN_UGC_POSTS_URL` (or block network access) to simulate a transient LinkedIn outage — confirm the job retries (via the standard bounded-retry mechanism) up to the configured max before landing in the `domain_events.dlx`/`social_publishing.content_scheduled.dlq` (the consumer side's DLQ — distinct from the `social_events` exchange this service publishes its own domain events to), rather than failing immediately like step 5.
+7. Manually set a `social_connections.expires_at` a few days out with a (fake) `refresh_token_encrypted` populated — confirm the token-refresh background job attempts a refresh on its next hourly pass (check logs); with no `refresh_token`, confirm it logs a warning instead of erroring.
+
 ## Repo layout
 
 ```
 services/
   gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  scheduler/
-    (social-publishing, scraper, notification, admin — later slices)
+    social-publishing/  (scraper, notification, admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -254,6 +288,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

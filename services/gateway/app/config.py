@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     ai_generation_service_url: str = "http://ai-generation:8000"
     content_service_url: str = "http://content:8000"
     scheduler_service_url: str = "http://scheduler:8000"
+    social_publishing_service_url: str = "http://social-publishing:8000"
 
     rate_limit_per_ip_per_minute: int = 120
     rate_limit_per_account_per_minute: int = 300

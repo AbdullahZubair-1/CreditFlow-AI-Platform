@@ -11,7 +11,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 5**: AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
 - **Slice 6**: Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
 - **Slice 7**: Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
-- **Slice 8** (this pass): Social Publishing Service — LinkedIn OAuth 2.0/OIDC connect flow, encrypted token storage, consumes `content.scheduled` to publish text or text+image UGC posts (the bonus image-publishing feature), a token-refresh background job, and Gateway support for a truly public OAuth callback route.
+- **Slice 8**: Social Publishing Service — LinkedIn OAuth 2.0/OIDC connect flow, encrypted token storage, consumes `content.scheduled` to publish text or text+image UGC posts (the bonus image-publishing feature), a token-refresh background job, and Gateway support for a truly public OAuth callback route.
+- **Slice 9** (this pass): Scraper Service — the first MongoDB-backed service, Playwright-driven crawling with robots.txt compliance and per-domain rate limiting, an internal (non-Celery) recurring-scan loop, RabbitMQ job queue (`scrape.requested` → `scrape.completed`/`scrape.failed`).
 
 ## Architecture
 
@@ -37,6 +38,7 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                          - /social/linkedin/callback            -> social-publishing service (PUBLIC —
    │                                                                 LinkedIn's browser redirect can't carry
    │                                                                 our Authorization header)
+   │                          - /scrape-jobs, /scraped-documents/*   -> scraper service
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
    │                                                                 pub/sub channel ai-generation
    │                                                                 publishes to, re-streams as SSE
@@ -116,7 +118,16 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
           publishes: post.published, post.failed
           background job: refreshes LinkedIn access tokens ahead of expiry
 
-Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
+   └─► scraper (FastAPI, :8010) — MongoDB only, no Postgres schema at all:
+          collections scrape_jobs, scraped_documents, processed_events
+          consumes: scrape.requested (published by this service's own REST endpoint,
+                    and by its internal recurring-job loop)
+          publishes: scrape.completed, scrape.failed
+          background job: an internal asyncio loop (not the Scheduler Service's Celery
+                    Beat) re-triggers daily/weekly recurring scrape jobs
+
+Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672),
+       mongo (:27017, Scraper Service only)
 ```
 
 ### Billing Service notes
@@ -180,6 +191,14 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Retry semantics split on failure type**: a transient LinkedIn failure (rate limit, 5xx, network error) re-raises out of the consumer, which lets `py_shared.rabbitmq`'s existing bounded-retry-then-DLX mechanism handle it (no separate custom backoff timer — the platform-wide mechanism already covers "retry with backoff... route to DLQ after max attempts"). A permanent failure (no LinkedIn connection, content deleted) is caught locally, recorded, and emits `post.failed` immediately without retrying — retrying something that will fail identically every time would just waste the bounded-retry budget.
 - **Token refresh is honest about a real LinkedIn constraint**: `app/token_refresh.py` runs hourly and refreshes any connection with a stored `refresh_token`, but LinkedIn's default 3-legged OAuth token doesn't grant refresh tokens unless your specific Developer App has been approved for that capability — most test/local apps won't have it. Connections without a `refresh_token` just log a warning near expiry rather than erroring; the user will need to reconnect once the (typically ~60-day) access token actually expires.
 - **Cross-service content fetch, not an event payload**: `content.scheduled`'s payload only carries `content_id` (not the post text), so the consumer calls Content's `GET /content/{id}` directly (service-to-service, bypassing the Gateway) rather than requiring Content to duplicate its own data into every event — same pattern as Credits calling Billing.
+
+### Scraper Service notes
+
+- **The first (and only) MongoDB-backed service**: per the spec's data-ownership table, Scraper owns no Postgres schema at all — `scrape_jobs`, `scraped_documents`, and even its own `processed_events` idempotency collection all live in MongoDB (`app/mongo.py`, via Motor's async driver). The `py_shared.rabbitmq.consume()` idempotency hooks are plain async callables, so backing them with Mongo instead of Postgres required zero changes to the shared library — proof the abstraction was right.
+- **Playwright over Crawl4AI**: the spec allows either; Playwright was simpler for this scope's "load the page, grab title/text/html" need with no extra wrapper. The Dockerfile deliberately uses Microsoft's official `mcr.microsoft.com/playwright/python` base image (browsers + OS deps pre-installed) instead of `playwright install` on a bare `python:3.11-slim`, which reliably fails without a list of extra apt packages that image already has.
+- **robots.txt compliance is real, not decorative**: `app/robots.py` fetches `robots.txt` itself via httpx (async) and hands the raw lines to `urllib.robotparser.RobotFileParser.parse()`, avoiding that library's own blocking `urlopen` call — `crawl()` in `app/crawler.py` refuses to proceed if disallowed, and treats that as a **permanent** failure (no retry — robots.txt won't change its mind on redelivery), distinct from a transient crawl error which does retry via the standard bounded-retry-then-DLX path.
+- **Per-domain rate limiting is in-process, not distributed**: `app/rate_limiter.py` tracks the last request time per hostname in a plain dict guarded by an `asyncio.Lock`, sufficient for the single-worker deployment this scope assumes — scaling to multiple scraper worker replicas later would need this moved to a shared store (Redis) to stay accurate across them, which isn't done here.
+- **Recurring jobs use a genuinely different mechanism than Scheduler**: the spec calls for "an internal scheduler" here, as opposed to the dedicated Scheduler Service's Celery Beat setup — so `app/recurring.py` is a plain asyncio loop inside this one service (started in `main.py`'s lifespan, no extra containers), scanning for `scrape_jobs` documents whose `next_run_at` has passed. Each firing inserts a fresh one-off (`recurrence: "none"`) job document for that occurrence and advances the parent's `next_run_at`, mirroring the pattern Scheduler uses but self-contained.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -274,12 +293,21 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 6. Temporarily point `LINKEDIN_UGC_POSTS_URL` (or block network access) to simulate a transient LinkedIn outage — confirm the job retries (via the standard bounded-retry mechanism) up to the configured max before landing in the `domain_events.dlx`/`social_publishing.content_scheduled.dlq` (the consumer side's DLQ — distinct from the `social_events` exchange this service publishes its own domain events to), rather than failing immediately like step 5.
 7. Manually set a `social_connections.expires_at` a few days out with a (fake) `refresh_token_encrypted` populated — confirm the token-refresh background job attempts a refresh on its next hourly pass (check logs); with no `refresh_token`, confirm it logs a warning instead of erroring.
 
+### Verifying Slice 9 (Scraper) end-to-end
+
+1. `POST /scrape-jobs` with a real, scrape-friendly `target_url` and `recurrence: "none"` — confirm `202`, a `scrape_jobs` document with `status=pending`, and within a few seconds (crawl time + the 5s-per-domain politeness delay) it flips to `status=completed` with a linked `scraped_documents` entry containing real `title`/`text_content`/`html`.
+2. `GET /scrape-jobs/{id}` and `GET /scraped-documents/{document_id}` return the expected data, scoped to the caller's account (a different account's token gets `404`, not someone else's document).
+3. Target a URL whose `robots.txt` disallows crawling (or one that returns a disallow-all robots.txt) — confirm the job goes straight to `status=failed` with a robots-related `error_reason`, and does **not** get retried (check the retry count / DLQ stays untouched, same distinction as Social Publishing's permanent-vs-transient split).
+4. Target an unreachable host (or briefly block network access) — confirm the job retries via the standard bounded-retry-then-DLX mechanism before eventually landing in `scraper_events.dlx`, rather than failing immediately like step 3.
+5. Issue two scrape jobs targeting the same domain back-to-back — confirm (via timestamps in `scraped_documents` or scraper logs) they're at least `MIN_SECONDS_BETWEEN_REQUESTS_PER_DOMAIN` apart, not fired simultaneously.
+6. `POST /scrape-jobs` with `recurrence: "daily"` — confirm the parent job document persists with a `next_run_at` roughly 24h out; manually backdate `next_run_at` in Mongo to force it due, and confirm the next recurring-scan pass (every 60s) creates a new one-off job document, fires it, and pushes the parent's `next_run_at` forward by another 24h.
+
 ## Repo layout
 
 ```
 services/
   gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  scheduler/
-    social-publishing/  (scraper, notification, admin — later slices)
+    social-publishing/  scraper/  (notification, admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -288,6 +316,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

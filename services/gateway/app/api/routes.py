@@ -138,6 +138,21 @@ async def proxy_publish_jobs(request: Request, identity: Identity = Depends(requ
     return await _proxy_protected(settings.social_publishing_service_url, "social/publish-jobs", request, identity)
 
 
+@router.api_route("/scrape-jobs", methods=["GET", "POST"])
+async def proxy_scrape_jobs_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.scraper_service_url, "scrape-jobs", request, identity)
+
+
+@router.get("/scrape-jobs/{path:path}")
+async def proxy_scrape_jobs(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.scraper_service_url, f"scrape-jobs/{path}", request, identity)
+
+
+@router.get("/scraped-documents/{path:path}")
+async def proxy_scraped_documents(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.scraper_service_url, f"scraped-documents/{path}", request, identity)
+
+
 @router.get("/uploads/{path:path}")
 async def proxy_uploads(path: str, request: Request) -> Response:
     # Uploaded content images are served unauthenticated, same trust level

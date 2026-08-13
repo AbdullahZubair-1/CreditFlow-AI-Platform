@@ -102,6 +102,16 @@ async def proxy_content(path: str, request: Request, identity: Identity = Depend
     return await _proxy_protected(settings.content_service_url, f"content/{path}", request, identity)
 
 
+@router.api_route("/scheduled", methods=["GET", "POST"])
+async def proxy_scheduled_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.scheduler_service_url, "scheduled", request, identity)
+
+
+@router.api_route("/scheduled/{path:path}", methods=["GET", "PATCH", "DELETE"])
+async def proxy_scheduled(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.scheduler_service_url, f"scheduled/{path}", request, identity)
+
+
 @router.get("/uploads/{path:path}")
 async def proxy_uploads(path: str, request: Request) -> Response:
     # Uploaded content images are served unauthenticated, same trust level

@@ -25,10 +25,21 @@ class TokenPairResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+    # The frontend passes along the account_id it was scoped to before the
+    # access token expired, so silent refresh doesn't reset the user back
+    # to their default account every ~15 minutes if they'd switched away
+    # from it. Falls back to the default account if omitted or no longer
+    # a member of the requested one.
+    account_id: str | None = None
 
 
 class LogoutRequest(BaseModel):
     access_token: str
+
+
+class SwitchAccountRequest(BaseModel):
+    access_token: str
+    account_id: str
 
 
 class VerifyEmailRequest(BaseModel):

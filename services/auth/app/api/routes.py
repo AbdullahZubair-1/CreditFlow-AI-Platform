@@ -1,12 +1,13 @@
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Request
+import httpx
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
-from app import events, redis_client, security
+from app import events, redis_client, security, user_tenant_client
 from app.config import settings
 from app.db import get_session
 from app.models import Credential, EmailVerificationToken, PasswordResetToken, RefreshToken, User
@@ -19,6 +20,7 @@ from app.schemas import (
     ResetPasswordRequest,
     SignupRequest,
     SignupResponse,
+    SwitchAccountRequest,
     TokenPairResponse,
     VerifyEmailRequest,
 )
@@ -26,8 +28,50 @@ from py_shared.errors import ApiError
 from py_shared.jwt import decode_token, issue_access_token, issue_refresh_token
 
 router = APIRouter()
+logger = logging.getLogger("auth.api")
 
 EMAIL_VERIFICATION_TTL = timedelta(hours=24)
+
+
+async def _resolve_default_account(user_id: str) -> tuple[str, str]:
+    """Picks the first account User/Tenant returns for this user (its own
+    /internal/users/{id}/accounts orders by account creation time, so
+    this is the user's individual account on their very first login).
+    Falls back to the old Slice-1 placeholder (account_id == user_id,
+    role owner) if User/Tenant is unreachable or hasn't yet consumed
+    user.registered — a brief, rare race right after signup, since event
+    delivery is normally sub-second."""
+    try:
+        accounts = await user_tenant_client.list_user_accounts(user_id)
+    except httpx.HTTPError:
+        logger.exception("could not resolve accounts for user %s, using placeholder", user_id)
+        return user_id, "owner"
+
+    if not accounts:
+        logger.warning("user %s has no accounts yet (registration event not yet consumed?), using placeholder", user_id)
+        return user_id, "owner"
+
+    return accounts[0]["account_id"], accounts[0]["role"]
+
+
+async def _resolve_requested_account(user_id: str, requested_account_id: str) -> tuple[str, str]:
+    """Validates that user_id is actually a member of requested_account_id
+    and returns (account_id, role) for it; falls back to the default
+    account if not (e.g. they were removed from a team since their last
+    token was issued)."""
+    try:
+        accounts = await user_tenant_client.list_user_accounts(user_id)
+    except httpx.HTTPError:
+        logger.exception("could not resolve accounts for user %s, using placeholder", user_id)
+        return user_id, "owner"
+
+    for account in accounts:
+        if account["account_id"] == requested_account_id:
+            return account["account_id"], account["role"]
+
+    if accounts:
+        return accounts[0]["account_id"], accounts[0]["role"]
+    return user_id, "owner"
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
@@ -87,12 +131,7 @@ async def login(
     if not user or not credential or not security.verify_password(body.password, credential.password_hash):
         raise ApiError("invalid_credentials", "Incorrect email or password.", 401)
 
-    # account_id/role are owned by the User/Tenant service; the Gateway
-    # composes them in on first login in later slices. For this slice we
-    # use the user_id as a placeholder individual-account scope so the
-    # token shape is already correct end-to-end.
-    account_id = str(user.id)
-    role = "owner"
+    account_id, role = await _resolve_default_account(str(user.id))
 
     access_token, claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
     await redis_client.store_jti(claims.jti, str(user.id), account_id)
@@ -136,8 +175,10 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     record.revoked = True
 
     user = await session.get(User, record.user_id)
-    account_id = str(user.id)
-    role = "owner"
+    if body.account_id:
+        account_id, role = await _resolve_requested_account(str(user.id), body.account_id)
+    else:
+        account_id, role = await _resolve_default_account(str(user.id))
 
     access_token, access_claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
     await redis_client.store_jti(access_claims.jti, str(user.id), account_id)
@@ -153,6 +194,49 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     await session.commit()
 
     return TokenPairResponse(access_token=access_token, refresh_token=new_refresh_token)
+
+
+@router.post("/switch-account", response_model=TokenPairResponse)
+async def switch_account(body: SwitchAccountRequest, session: AsyncSession = Depends(get_session)) -> TokenPairResponse:
+    """Backs the frontend's Account Switcher — issues a new account-scoped
+    JWT for a different account the caller belongs to, per the spec
+    ("Account Switcher... triggers a new account-scoped JWT"). Requires a
+    currently valid, non-revoked access token (same bar as any protected
+    Gateway route) rather than weakening the revocation guarantee to let
+    an expired or logged-out token switch accounts."""
+    try:
+        claims = decode_token(body.access_token)
+    except Exception as exc:  # noqa: BLE001
+        raise ApiError("invalid_token", "Access token is invalid or expired.", 401) from exc
+
+    if not await redis_client.is_jti_active(claims["jti"]):
+        raise ApiError("invalid_token", "Access token has been revoked.", 401)
+
+    user = await session.get(User, uuid.UUID(claims["user_id"]))
+    if not user:
+        raise ApiError("invalid_token", "Access token is invalid.", 400)
+
+    accounts = await user_tenant_client.list_user_accounts(str(user.id))
+    match = next((a for a in accounts if a["account_id"] == body.account_id), None)
+    if not match:
+        raise ApiError("forbidden", "You are not a member of this account.", 403)
+
+    access_token, access_claims = issue_access_token(
+        str(user.id), match["account_id"], match["role"], user.is_platform_admin
+    )
+    await redis_client.store_jti(access_claims.jti, str(user.id), match["account_id"])
+
+    refresh_token, refresh_jti = issue_refresh_token(str(user.id))
+    session.add(
+        RefreshToken(
+            user_id=user.id,
+            jti=refresh_jti,
+            expires_at=datetime.now(UTC) + timedelta(seconds=30 * 24 * 60 * 60),
+        )
+    )
+    await session.commit()
+
+    return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)

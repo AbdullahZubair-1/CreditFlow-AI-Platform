@@ -174,6 +174,24 @@ async def remove_member(
     await session.commit()
 
 
+@router.get("/internal/users/{user_id}/accounts")
+async def internal_list_user_accounts(user_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Used by Auth to pick a default
+    account_id/role to scope a JWT to at login (and to validate an
+    account-switch request), since Auth owns identity but not
+    account/membership data."""
+    rows = await session.execute(
+        select(Account, AccountMember.role)
+        .join(AccountMember, AccountMember.account_id == Account.id)
+        .where(AccountMember.user_id == user_id)
+        .order_by(Account.created_at)
+    )
+    return [
+        {"account_id": str(a.id), "role": role, "type": a.type, "name": a.name} for a, role in rows.all()
+    ]
+
+
 @router.get("/internal/accounts")
 async def internal_list_accounts(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """Service-to-service only (see the /internal/* note on the owner

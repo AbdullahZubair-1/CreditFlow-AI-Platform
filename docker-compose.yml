@@ -39,6 +39,19 @@ services:
       timeout: 5s
       retries: 10
 
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   auth:
     build:
       context: .
@@ -254,6 +267,22 @@ services:
     ports:
       - "8009:8000"
 
+  scraper:
+    build:
+      context: .
+      dockerfile: services/scraper/Dockerfile
+    restart: unless-stopped
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8010:8000"
+
   gateway:
     build:
       context: .
@@ -271,6 +300,7 @@ services:
       CONTENT_SERVICE_URL: http://content:8000
       SCHEDULER_SERVICE_URL: http://scheduler:8000
       SOCIAL_PUBLISHING_SERVICE_URL: http://social-publishing:8000
+      SCRAPER_SERVICE_URL: http://scraper:8000
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
@@ -282,6 +312,8 @@ services:
       auth:
         condition: service_started
       user-tenant:
+        condition: service_started
+      scraper:
         condition: service_started
       billing:
         condition: service_started
@@ -315,3 +347,4 @@ services:
 volumes:
   postgres_data:
   content_uploads:
+  mongo_data:

@@ -112,6 +112,32 @@ async def proxy_scheduled(path: str, request: Request, identity: Identity = Depe
     return await _proxy_protected(settings.scheduler_service_url, f"scheduled/{path}", request, identity)
 
 
+@router.get("/social/linkedin/callback")
+async def proxy_linkedin_callback(request: Request) -> Response:
+    # Public — LinkedIn redirects the browser here directly with no way to
+    # attach our Authorization header; the caller's identity travels in
+    # the signed `state` param the Social Publishing service verifies
+    # itself (see that service's app/crypto.py), not via Gateway auth.
+    if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
+        raise ApiError("rate_limited", "Too many requests from this IP.", 429)
+    return await forward(request, settings.social_publishing_service_url, "social/linkedin/callback")
+
+
+@router.post("/social/linkedin/connect")
+async def proxy_linkedin_connect(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.social_publishing_service_url, "social/linkedin/connect", request, identity)
+
+
+@router.api_route("/social/connections", methods=["GET", "DELETE"])
+async def proxy_social_connections(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.social_publishing_service_url, "social/connections", request, identity)
+
+
+@router.get("/social/publish-jobs")
+async def proxy_publish_jobs(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.social_publishing_service_url, "social/publish-jobs", request, identity)
+
+
 @router.get("/uploads/{path:path}")
 async def proxy_uploads(path: str, request: Request) -> Response:
     # Uploaded content images are served unauthenticated, same trust level

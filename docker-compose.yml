@@ -229,6 +229,31 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  social-publishing:
+    build:
+      context: .
+      dockerfile: services/social-publishing/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@postgres:5432/${POSTGRES_DB:-creditflow}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      CONTENT_SERVICE_URL: http://content:8000
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-linkedin-client-id-placeholder}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-linkedin-client-secret-placeholder}
+      LINKEDIN_REDIRECT_URI: ${LINKEDIN_REDIRECT_URI:-http://localhost:8080/social/linkedin/callback}
+      FRONTEND_CONNECTIONS_URL: ${FRONTEND_CONNECTIONS_URL:-http://localhost:5173/linkedin-connections}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-gGLNraB90AVpJD2_S0MA8qURS80AvCLzs96rMpEkCRw=}
+      OAUTH_STATE_KEY: ${OAUTH_STATE_KEY:-Pn_HZpWVb9vdcDE5ILlBxerWRG-xM_JIShAh90Gl2y8=}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      content:
+        condition: service_started
+    ports:
+      - "8009:8000"
+
   gateway:
     build:
       context: .
@@ -245,6 +270,7 @@ services:
       AI_GENERATION_SERVICE_URL: http://ai-generation:8000
       CONTENT_SERVICE_URL: http://content:8000
       SCHEDULER_SERVICE_URL: http://scheduler:8000
+      SOCIAL_PUBLISHING_SERVICE_URL: http://social-publishing:8000
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
@@ -268,6 +294,8 @@ services:
       content:
         condition: service_started
       scheduler:
+        condition: service_started
+      social-publishing:
         condition: service_started
     ports:
       - "8080:8000"

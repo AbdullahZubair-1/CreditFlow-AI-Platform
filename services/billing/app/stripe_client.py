@@ -27,6 +27,35 @@ def create_checkout_session(
     return session.url
 
 
+def create_one_time_checkout_session(
+    customer_id: str,
+    amount_cents: int,
+    currency: str,
+    description: str,
+    metadata: dict[str, str],
+    success_url: str,
+    cancel_url: str,
+) -> str:
+    session = stripe.checkout.Session.create(
+        customer=customer_id,
+        mode="payment",
+        line_items=[
+            {
+                "price_data": {
+                    "currency": currency,
+                    "product_data": {"name": description},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }
+        ],
+        metadata=metadata,
+        success_url=success_url,
+        cancel_url=cancel_url,
+    )
+    return session.url
+
+
 def modify_subscription(subscription_id: str, plan: str) -> None:
     price_id = PLAN_PRICE_IDS.get(plan)
     if not price_id:

@@ -15,6 +15,7 @@ from app.schemas import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
     InvoiceResponse,
+    OneTimeCheckoutRequest,
     PlanResponse,
     RefundRequest,
     RefundResponse,
@@ -79,6 +80,42 @@ async def create_checkout_session(
     try:
         checkout_url = stripe_client.create_checkout_session(
             billing_account.stripe_customer_id, body.plan, body.success_url, body.cancel_url
+        )
+    except stripe.error.StripeError as exc:  # noqa: BLE001
+        raise ApiError("stripe_error", str(exc), 502) from exc
+
+    return CheckoutSessionResponse(checkout_url=checkout_url)
+
+
+@router.post("/checkout-sessions/one-time", response_model=CheckoutSessionResponse)
+async def create_one_time_checkout_session(
+    body: OneTimeCheckoutRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> CheckoutSessionResponse:
+    """Used by other services (e.g. Credits/Marketplace) to charge an
+    account for a one-off purchase — the caller passes the buyer's own
+    account identity headers through, same as any Gateway-proxied call, and
+    arbitrary metadata that a Billing webhook consumer downstream (see
+    events.py) uses to route the resulting `checkout.session.completed`
+    event back to the right domain event."""
+    billing_account = await session.get(BillingAccount, uuid.UUID(identity.account_id))
+    if not billing_account:
+        raise ApiError(
+            "billing_not_ready",
+            "This account's Stripe customer hasn't been provisioned yet. Try again shortly.",
+            409,
+        )
+
+    try:
+        checkout_url = stripe_client.create_one_time_checkout_session(
+            billing_account.stripe_customer_id,
+            body.amount_cents,
+            body.currency,
+            body.description,
+            body.metadata,
+            body.success_url,
+            body.cancel_url,
         )
     except stripe.error.StripeError as exc:  # noqa: BLE001
         raise ApiError("stripe_error", str(exc), 502) from exc

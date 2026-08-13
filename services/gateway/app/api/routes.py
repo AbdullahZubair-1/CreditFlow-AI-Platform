@@ -14,6 +14,26 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+async def _proxy_protected(service_url: str, path: str, request: Request, identity: Identity) -> Response:
+    if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
+        raise ApiError("rate_limited", "Too many requests from this IP.", 429)
+    if not await redis_client.check_rate_limit(
+        f"account:{identity.account_id}", settings.rate_limit_per_account_per_minute
+    ):
+        raise ApiError("rate_limited", "Too many requests for this account.", 429)
+
+    return await forward(
+        request,
+        service_url,
+        path,
+        extra_headers={
+            "X-User-Id": identity.user_id,
+            "X-Account-Id": identity.account_id,
+            "X-Role": identity.role,
+        },
+    )
+
+
 @router.api_route("/auth/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_auth(path: str, request: Request) -> Response:
     if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
@@ -23,63 +43,32 @@ async def proxy_auth(path: str, request: Request) -> Response:
 
 @router.api_route("/me/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_me(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    return await _proxy_user_tenant(f"me/{path}", request, identity)
+    return await _proxy_protected(settings.user_tenant_service_url, f"me/{path}", request, identity)
 
 
 @router.api_route("/accounts", methods=["GET", "POST"])
 async def proxy_accounts_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    return await _proxy_user_tenant("accounts", request, identity)
+    return await _proxy_protected(settings.user_tenant_service_url, "accounts", request, identity)
 
 
 @router.api_route("/accounts/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_accounts(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    return await _proxy_user_tenant(f"accounts/{path}", request, identity)
+    return await _proxy_protected(settings.user_tenant_service_url, f"accounts/{path}", request, identity)
 
 
 @router.api_route("/invites/{path:path}", methods=["GET", "POST"])
 async def proxy_invites(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    return await _proxy_user_tenant(f"invites/{path}", request, identity)
+    return await _proxy_protected(settings.user_tenant_service_url, f"invites/{path}", request, identity)
 
 
 @router.api_route("/billing/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_billing(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
-        raise ApiError("rate_limited", "Too many requests from this IP.", 429)
-    if not await redis_client.check_rate_limit(
-        f"account:{identity.account_id}", settings.rate_limit_per_account_per_minute
-    ):
-        raise ApiError("rate_limited", "Too many requests for this account.", 429)
-
-    return await forward(
-        request,
-        settings.billing_service_url,
-        path,
-        extra_headers={
-            "X-User-Id": identity.user_id,
-            "X-Account-Id": identity.account_id,
-            "X-Role": identity.role,
-        },
-    )
+    return await _proxy_protected(settings.billing_service_url, path, request, identity)
 
 
-async def _proxy_user_tenant(path: str, request: Request, identity: Identity) -> Response:
-    if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
-        raise ApiError("rate_limited", "Too many requests from this IP.", 429)
-    if not await redis_client.check_rate_limit(
-        f"account:{identity.account_id}", settings.rate_limit_per_account_per_minute
-    ):
-        raise ApiError("rate_limited", "Too many requests for this account.", 429)
-
-    return await forward(
-        request,
-        settings.user_tenant_service_url,
-        path,
-        extra_headers={
-            "X-User-Id": identity.user_id,
-            "X-Account-Id": identity.account_id,
-            "X-Role": identity.role,
-        },
-    )
+@router.api_route("/credits/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
+async def proxy_credits(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.credits_service_url, path, request, identity)
 
 
 # --- Webhooks ---

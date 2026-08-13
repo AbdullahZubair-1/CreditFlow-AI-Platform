@@ -86,6 +86,8 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
             await _apply_payment_failed(session, obj)
         elif event_type == "customer.subscription.updated":
             await _apply_subscription_updated(session, obj)
+        elif event_type == "checkout.session.completed":
+            await _apply_checkout_session_completed(session, obj)
 
         await session.commit()
 
@@ -116,7 +118,41 @@ async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
         subscription.status = "active"
         subscription.grace_period_ends_at = None
 
-    add_outbox_event(session, "invoice.paid", {"account_id": str(account_id), "invoice_id": invoice_obj["id"]})
+    add_outbox_event(
+        session,
+        "invoice.paid",
+        {
+            "account_id": str(account_id),
+            "invoice_id": invoice_obj["id"],
+            "amount_cents": invoice_obj["amount_paid"],
+            # the Credits Service maps plan_tier -> credits granted; falls
+            # back to "free" (0 credits) if the subscription row is somehow
+            # missing, rather than failing the whole handler.
+            "plan_tier": subscription.plan_tier if subscription else "free",
+        },
+    )
+
+
+async def _apply_checkout_session_completed(session, checkout_obj: dict[str, Any]) -> None:
+    """Subscription checkouts settle via invoice.paid instead; the only
+    checkout.session.completed we act on here is a one-time marketplace
+    purchase (see stripe_client.create_one_time_checkout_session), which
+    carries no invoice and must be translated into a domain event of its
+    own for the Credits Service to consume."""
+    metadata = checkout_obj.get("metadata") or {}
+    if metadata.get("purpose") != "marketplace_purchase":
+        return
+
+    add_outbox_event(
+        session,
+        "marketplace.payment_completed",
+        {
+            "listing_id": metadata["listing_id"],
+            "buyer_account_id": metadata["buyer_account_id"],
+            "seller_account_id": metadata["seller_account_id"],
+            "amount_cents": checkout_obj["amount_total"],
+        },
+    )
 
 
 async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:
@@ -172,8 +208,12 @@ async def start_consumers() -> None:
     account_queue = await declare_durable_queue_with_dlx(
         channel, DOMAIN_EVENTS_EXCHANGE, ACCOUNT_QUEUE, routing_keys=["account.created"]
     )
+    # "#" (not "*") because Stripe event types are themselves dot-separated
+    # (e.g. "invoice.paid", "checkout.session.completed"), so the relayed
+    # routing key "billing.<type>" can have more than two segments — "*"
+    # only matches exactly one word and would silently miss those.
     webhook_queue = await declare_durable_queue_with_dlx(
-        channel, WEBHOOK_EVENTS_EXCHANGE, WEBHOOK_QUEUE, routing_keys=["billing.*"]
+        channel, WEBHOOK_EVENTS_EXCHANGE, WEBHOOK_QUEUE, routing_keys=["billing.#"]
     )
 
     await consume(channel, account_queue, DOMAIN_EVENTS_EXCHANGE, _handle_account_created, _is_processed, _mark_processed)

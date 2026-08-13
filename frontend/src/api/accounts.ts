@@ -21,3 +21,31 @@ export function acceptInvite(token: string) {
     method: "POST",
   });
 }
+
+export interface Member {
+  user_id: string;
+  role: string;
+  joined_at: string;
+}
+
+export function listMembers(accountId: string) {
+  return apiFetch<Member[]>(`/accounts/${accountId}/members`);
+}
+
+export function inviteMember(accountId: string, email: string, role: string) {
+  return apiFetch<{ invite_id: string; dev_invite_token: string }>(`/accounts/${accountId}/invite`, {
+    method: "POST",
+    body: { email, role },
+  });
+}
+
+export function updateMemberRole(accountId: string, userId: string, role: string) {
+  return apiFetch<Member>(`/accounts/${accountId}/members/${userId}`, {
+    method: "PATCH",
+    body: { role },
+  });
+}
+
+export function removeMember(accountId: string, userId: string) {
+  return apiFetch<void>(`/accounts/${accountId}/members/${userId}`, { method: "DELETE" });
+}

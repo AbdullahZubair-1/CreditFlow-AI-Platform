@@ -1,3 +1,5 @@
+import { decodeJwt } from "./jwt";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
 export class ApiError extends Error {
@@ -23,6 +25,11 @@ export function setTokens(access: string | null, refresh: string | null) {
   onTokensChanged?.(access, refresh);
 }
 
+function getCurrentAccountId(): string | null {
+  if (!accessToken) return null;
+  return decodeJwt(accessToken)?.account_id ?? null;
+}
+
 export function getAccessToken() {
   return accessToken;
 }
@@ -43,10 +50,14 @@ async function parseErrorBody(res: Response): Promise<ApiError> {
 
 async function refreshAccessToken(): Promise<boolean> {
   if (!refreshToken) return false;
+  // Pass the account_id the (now-expired) access token was scoped to, so
+  // silent refresh doesn't reset the user back to their default account
+  // if they'd switched away from it.
+  const accountId = getCurrentAccountId();
   const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    body: JSON.stringify({ refresh_token: refreshToken, account_id: accountId }),
   });
   if (!res.ok) {
     setTokens(null, null);

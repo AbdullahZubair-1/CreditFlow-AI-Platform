@@ -4,6 +4,7 @@ export interface JwtClaims {
   role: string;
   jti: string;
   exp: number;
+  is_superadmin?: boolean;
 }
 
 export function decodeJwt(token: string): JwtClaims | null {

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     credits_service_url: str = "http://credits:8000"
     usage_service_url: str = "http://usage:8000"
     ai_generation_service_url: str = "http://ai-generation:8000"
+    content_service_url: str = "http://content:8000"
 
     rate_limit_per_ip_per_minute: int = 120
     rate_limit_per_account_per_minute: int = 300

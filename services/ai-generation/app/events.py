@@ -33,7 +33,16 @@ def _envelope(routing_key: str, data: dict[str, Any]) -> dict[str, Any]:
 
 
 async def publish_generation_completed(
-    account_id: str, generation_job_id: str, model: str, prompt_tokens: int, completion_tokens: int, total_tokens: int, cost_cents: int
+    account_id: str,
+    user_id: str,
+    generation_job_id: str,
+    model: str,
+    purpose: str,
+    response_text: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    total_tokens: int,
+    cost_cents: int,
 ) -> None:
     try:
         channel = await get_channel()
@@ -45,8 +54,14 @@ async def publish_generation_completed(
                 "ai.generation_completed",
                 {
                     "account_id": account_id,
+                    "user_id": user_id,
                     "generation_job_id": generation_job_id,
                     "model": model,
+                    # the Content Service only turns "post" generations into
+                    # a draft; other purposes carry the response through too
+                    # (harmless) but are ignored by that consumer.
+                    "purpose": purpose,
+                    "response_text": response_text,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,

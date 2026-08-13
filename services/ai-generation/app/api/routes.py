@@ -51,7 +51,12 @@ async def create_generation(
     if not allowed:
         raise ApiError("quota_exceeded", "This account has exceeded its usage quota for this period.", 429)
 
-    job = GenerationJob(account_id=uuid.UUID(identity.account_id), user_id=uuid.UUID(identity.user_id), model=model_slug)
+    job = GenerationJob(
+        account_id=uuid.UUID(identity.account_id),
+        user_id=uuid.UUID(identity.user_id),
+        model=model_slug,
+        purpose=body.purpose,
+    )
     session.add(job)
     await session.commit()
 

@@ -9,7 +9,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 3**: Credits/Marketplace Service — append-only credits ledger, credit grants on `invoice.paid`, refund clawbacks, and peer-to-peer marketplace listing/purchase settled through a one-time Stripe Checkout Session that Billing creates on Credits' behalf.
 - **Slice 4**: Usage/Metering Service — Redis quota counters for fast pre-checks, a durable Postgres usage ledger reconciled against Redis every minute, and 80%/100% threshold detection. Introduces the `ai_events` exchange that the (not-yet-built) AI Generation Service will publish to.
 - **Slice 5**: AI Generation Service — OpenRouter streaming completions fanned out over Redis pub/sub, re-streamed to the frontend as SSE through the Gateway (now a real relay instead of a 501 stub), gated by a synchronous call to Usage's precheck endpoint, plus bonus Pollinations.ai image generation.
-- **Slice 6** (this pass): Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
+- **Slice 6**: Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
+- **Slice 7** (this pass): Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
 
 ## Architecture
 
@@ -28,6 +29,7 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                          - /uploads/*                         -> content service (static files,
    │                                                                 unauthenticated, same trust level
    │                                                                 as Pollinations image URLs)
+   │                          - /scheduled, /scheduled/*            -> scheduler service
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
    │                                                                 pub/sub channel ai-generation
    │                                                                 publishes to, re-streams as SSE
@@ -90,6 +92,16 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
                     Content row + its first ContentVersion snapshot
           publishes: content.created, content.updated
 
+   └─► scheduler — three containers sharing one image (schema: scheduler):
+          scheduler (FastAPI, :8008, calendar REST API)
+          scheduler-worker (Celery worker)
+          scheduler-beat (Celery Beat, scans scheduled_posts every 60s)
+          Celery broker + result backend: Redis db 2 (separate from Gateway/Auth's
+          db 0 and Usage's db 1)
+          consumes: content.created (into a local available_content cache, so
+                    scheduling validates a content_id without a live cross-service call)
+          publishes: content.scheduled — deliberately NOT best-effort (see notes below)
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672)
 ```
 
@@ -135,6 +147,15 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Local-volume "object storage"**: `POST /content/{id}/image` (multipart) writes to a Docker volume mounted at `/app/uploads` and serves it back at `/uploads/{filename}` via a `StaticFiles` mount — explicitly a dev stand-in for S3 (see `app/storage.py`'s docstring); swapping in real S3 later only touches that one file.
 - **Draft creation is idempotent by construction**: the `ai.generation_completed` consumer checks for an existing `Content` row with the same `source_generation_job_id` before creating one, on top of the standard `processed_events` idempotency check — belt-and-suspenders against redelivery.
 - **AI-generated images aren't wired into Content yet**: AI Generation's bonus `POST /generations/{job_id}/image` (Slice 5) produces a Pollinations.ai URL but nothing currently attaches it to the Content record that same generation created — a manual `PATCH /content/{id}` with that URL works today; auto-attaching it is a small fast-follow, not yet done.
+
+### Scheduler Service notes
+
+- **Three containers, one image**: `scheduler` (the REST/calendar API), `scheduler-worker` (a Celery worker), and `scheduler-beat` (Celery Beat, which enqueues a scan task every 60s per `settings.beat_scan_interval_seconds`) all build from `services/scheduler/Dockerfile` — only the `command:` differs per container in `docker-compose.yml`. Celery's broker and result backend are Redis db 2, kept separate from the Gateway/Auth/AI-Generation's db 0 and Usage's db 1, per the spec's explicit call-out for this service.
+- **Recurring schedules (bonus)**: `recurrence` is one of `none`/`daily`/`weekly`/`monthly`. A recurring post's `publish_at` advances by a fixed `timedelta` (`RECURRENCE_DELTAS` in `app/tasks.py`) each time it fires and stays `status=scheduled` for its next occurrence, rather than moving to `fired` like a one-off. `monthly` is a placeholder 30-day interval, not calendar-month-accurate (no Feb-28-vs-31st handling) — good enough to demonstrate the feature, not production calendar math.
+- **Double-fire protection**: before firing, the task tries a Redis `SET NX EX` lock keyed on `(scheduled_post_id, publish_at)` with a 55s TTL — shorter than the 60s scan interval, so a lock can never outlive the window where the next scan would need it. This protects against both an overlapping slow scan and, if ever scaled beyond one, multiple beat/worker replicas.
+- **`content.scheduled` publish failures are NOT swallowed here** — a deliberate exception to this codebase's usual "best-effort, log and continue" pattern for non-Billing event publishing (see Credits/AI Generation/Content's notes above). If the publish raises, `app/tasks.py` never commits the "fired" state change; the occurrence stays `status=scheduled` and gets retried on the next scan once the lock expires. Losing this specific event would mean a post silently never reaches Social Publishing, which is worse than a delayed retry.
+- **Content ownership cache, not a live check**: `POST /scheduled` validates `content_id` against a local `available_content` table populated by consuming `content.created`, rather than calling the Content Service directly — matches the spec's framing that Scheduler "knows what is available to schedule" from that event, and avoids a cross-service call on every schedule request. It does mean a content item briefly won't be schedulable if Scheduler's consumer hasn't processed its `content.created` event yet (normally sub-second).
+- **No cross-service content details on the calendar view**: `GET /scheduled` returns `content_id`, not the post's title/body — fetching that is left to the frontend calling Content directly, rather than Scheduler doing an N+1 fan-out of cross-service calls per calendar render.
 
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
@@ -208,13 +229,23 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 6. `POST /content/{id}/image` (multipart, any small image file) — confirm the returned `image_url` (e.g. `/uploads/<uuid>.jpg`) resolves to the actual image when opened through the Gateway (`http://localhost:8080/uploads/<uuid>.jpg`), and that the file persists across a `docker-compose restart content` (the `content_uploads` named volume).
 7. Kill the `content` container mid-way through consuming a burst of `ai.generation_completed` events and restart it — confirm no duplicate draft Content rows for any single `generation_job_id`.
 
+### Verifying Slice 7 (Scheduler) end-to-end
+
+1. Create a piece of content (Slice 6), then `POST /scheduled` with its `content_id` and a near-future `publish_at` (e.g. 90 seconds out, timezone-aware ISO 8601) and `recurrence: "none"` — confirm `201` and a `scheduler.scheduled_posts` row with `status=scheduled`.
+2. Wait for the next Beat scan (`scheduler-beat` logs should show the task firing every 60s) — confirm the row flips to `status=fired`, `occurrences_fired=1`, and a `content.scheduled` event appears on the RabbitMQ management UI's `domain_events` exchange with the right `content_id`.
+3. Repeat with `recurrence: "weekly"` — confirm that after it fires, `status` stays `scheduled`, `occurrences_fired` increments, and `publish_at` has advanced by exactly 7 days rather than moving to `fired`.
+4. `PATCH /scheduled/{id}` to push `publish_at` further out, or change `recurrence` — confirm it only works while `status=scheduled` (`409` once `fired`/`cancelled`).
+5. `DELETE /scheduled/{id}` before it's due — confirm `status=cancelled` and that the next Beat scan skips it (no `content.scheduled` emitted for it).
+6. `GET /scheduled?start=...&end=...` — confirm it returns only the caller's account's items within the window, ordered by `publish_at`.
+7. Stop `rabbitmq` (or block network to it) right as a post becomes due, let Beat's scan attempt fire, then restore connectivity — confirm the post is still `status=scheduled` (not incorrectly marked `fired`) and the *next* scan successfully fires it once the lock (55s TTL) has expired.
+8. Schedule two posts for the same `publish_at`, then manually run two overlapping scans in quick succession (e.g. trigger the Celery task twice back-to-back) — confirm each post only ends up firing (and emitting `content.scheduled`) once, not twice.
+
 ## Repo layout
 
 ```
 services/
-  gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  (scheduler,
-                                                                                          social-publishing, scraper,
-                                                                                          notification, admin — later slices)
+  gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  scheduler/
+    (social-publishing, scraper, notification, admin — later slices)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -223,6 +254,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Scheduler (+ bonus recurring schedules) → Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Social Publishing (+ bonus image publishing) → Scraper → Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

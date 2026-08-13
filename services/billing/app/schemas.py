@@ -19,6 +19,15 @@ class CheckoutSessionResponse(BaseModel):
     checkout_url: str
 
 
+class OneTimeCheckoutRequest(BaseModel):
+    amount_cents: int
+    currency: str = "usd"
+    description: str
+    metadata: dict[str, str] = {}
+    success_url: str
+    cancel_url: str
+
+
 class UpdateSubscriptionRequest(BaseModel):
     plan: str
 

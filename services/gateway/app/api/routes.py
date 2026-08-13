@@ -1,10 +1,11 @@
 import stripe
 from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi.responses import StreamingResponse
 
-from app import redis_client, webhooks
+from app import redis_client, sse, webhooks
 from app.config import settings
-from app.identity import Identity, require_jwt
-from app.proxy import forward
+from app.identity import Identity, require_jwt, require_jwt_from_header_or_query
+from app.proxy import forward, get_client
 from py_shared.errors import ApiError
 
 router = APIRouter()
@@ -76,6 +77,21 @@ async def proxy_usage(path: str, request: Request, identity: Identity = Depends(
     return await _proxy_protected(settings.usage_service_url, path, request, identity)
 
 
+@router.api_route("/generations", methods=["GET", "POST"])
+async def proxy_generations_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.ai_generation_service_url, "generations", request, identity)
+
+
+@router.api_route("/generations/{path:path}", methods=["GET", "POST"])
+async def proxy_generations(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.ai_generation_service_url, f"generations/{path}", request, identity)
+
+
+@router.get("/models")
+async def proxy_models(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.ai_generation_service_url, "models", request, identity)
+
+
 # --- Webhooks ---
 
 
@@ -102,9 +118,31 @@ async def webhook_linkedin() -> Response:
 
 @router.post("/webhooks/openrouter")
 async def webhook_openrouter() -> Response:
-    raise ApiError("not_implemented", "OpenRouter webhook arrives with the AI Generation slice.", 501)
+    # OpenRouter's chat completions API is request/response (or streaming
+    # over the initiating HTTP connection) — it has no webhook delivery
+    # model to receive from, so this stub stays a placeholder even after
+    # the AI Generation slice landed real streaming via SSE re-relay below.
+    raise ApiError("not_implemented", "OpenRouter has no webhook delivery model for chat completions.", 501)
 
 
 @router.get("/sse/{job_id}")
-async def sse_stream(job_id: str) -> Response:
-    raise ApiError("not_implemented", "SSE re-streaming arrives with the AI Generation slice.", 501)
+async def sse_stream(
+    job_id: str, identity: Identity = Depends(require_jwt_from_header_or_query)
+) -> StreamingResponse:
+    # job_id is an unguessable UUID, but still worth confirming the caller
+    # actually owns it before handing them a live token stream — reuses
+    # AI Generation's existing per-account-scoped lookup rather than
+    # duplicating that check here.
+    ownership_check = await get_client().get(
+        f"{settings.ai_generation_service_url}/generations/{job_id}",
+        headers={
+            "X-User-Id": identity.user_id,
+            "X-Account-Id": identity.account_id,
+            "X-Role": identity.role,
+        },
+    )
+    if ownership_check.status_code == 404:
+        raise ApiError("not_found", "Generation job not found.", 404)
+    ownership_check.raise_for_status()
+
+    return StreamingResponse(sse.stream_generation(job_id), media_type="text/event-stream")

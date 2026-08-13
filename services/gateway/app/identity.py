@@ -15,11 +15,7 @@ class Identity:
     jti: str
 
 
-async def require_jwt(authorization: str | None = Header(default=None)) -> Identity:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise ApiError("unauthenticated", "Missing or malformed Authorization header.", 401)
-
-    token = authorization.split(" ", 1)[1]
+async def _resolve_identity(token: str) -> Identity:
     try:
         claims = decode_token(token)
     except Exception as exc:  # noqa: BLE001
@@ -32,3 +28,23 @@ async def require_jwt(authorization: str | None = Header(default=None)) -> Ident
     return Identity(
         user_id=claims["user_id"], account_id=claims["account_id"], role=claims["role"], jti=jti
     )
+
+
+async def require_jwt(authorization: str | None = Header(default=None)) -> Identity:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise ApiError("unauthenticated", "Missing or malformed Authorization header.", 401)
+    return await _resolve_identity(authorization.split(" ", 1)[1])
+
+
+async def require_jwt_from_header_or_query(
+    authorization: str | None = Header(default=None), access_token: str | None = None
+) -> Identity:
+    """Browsers' native EventSource cannot set custom headers, so the SSE
+    route is the one place a short-lived access token is accepted via
+    query string as a fallback — every other protected route uses
+    require_jwt above and only ever accepts the Authorization header."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return await _resolve_identity(authorization.split(" ", 1)[1])
+    if access_token:
+        return await _resolve_identity(access_token)
+    raise ApiError("unauthenticated", "Missing access token.", 401)

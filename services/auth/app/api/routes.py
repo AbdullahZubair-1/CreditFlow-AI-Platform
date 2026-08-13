@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request
@@ -51,7 +52,7 @@ async def signup(body: SignupRequest, session: AsyncSession = Depends(get_sessio
     session.add(verification)
     await session.commit()
 
-    await events.publish_user_registered(str(user.id), user.email)
+    await events.publish_user_registered(str(user.id), user.email, token)
 
     return SignupResponse(user_id=str(user.id), email=user.email, dev_verification_token=token)
 
@@ -200,3 +201,16 @@ async def reset_password(body: ResetPasswordRequest, session: AsyncSession = Dep
     credential = await session.scalar(select(Credential).where(Credential.user_id == user.id))
     credential.password_hash = security.hash_password(body.new_password)
     await session.commit()
+
+
+@router.get("/internal/users/{user_id}")
+async def internal_get_user(user_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes (see _reject_internal_paths in
+    services/gateway/app/api/routes.py) so this is unreachable from the
+    public internet. Used by the Notification Service to resolve an email
+    address from a user_id carried in an event payload."""
+    user = await session.get(User, user_id)
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+    return {"user_id": str(user.id), "email": user.email}

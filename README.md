@@ -12,7 +12,8 @@ This repo is being built incrementally, slice by slice, rather than all 13 servi
 - **Slice 6**: Content Service — versioned draft/approved/published content, auto-created from `ai.generation_completed` (finally closing the loop AI Generation's events opened), manual image upload to a local-volume dev stand-in for S3.
 - **Slice 7**: Scheduler Service — Celery + Celery Beat calendar (three containers: REST API, worker, beat, sharing one image), a Redis-locked periodic scan that fires due posts and emits `content.scheduled`, plus the bonus recurring-schedules feature (daily/weekly/monthly cadences).
 - **Slice 8**: Social Publishing Service — LinkedIn OAuth 2.0/OIDC connect flow, encrypted token storage, consumes `content.scheduled` to publish text or text+image UGC posts (the bonus image-publishing feature), a token-refresh background job, and Gateway support for a truly public OAuth callback route.
-- **Slice 9** (this pass): Scraper Service — the first MongoDB-backed service, Playwright-driven crawling with robots.txt compliance and per-domain rate limiting, an internal (non-Celery) recurring-scan loop, RabbitMQ job queue (`scrape.requested` → `scrape.completed`/`scrape.failed`).
+- **Slice 9**: Scraper Service — the first MongoDB-backed service, Playwright-driven crawling with robots.txt compliance and per-domain rate limiting, an internal (non-Celery) recurring-scan loop, RabbitMQ job queue (`scrape.requested` → `scrape.completed`/`scrape.failed`).
+- **Slice 10** (this pass): Notification Service — consumes nearly every domain event across the platform (across four separate exchanges) to send real transactional email via Resend, finally replacing the dev-only OTP/verification-token logging from Slice 1. Also fixes a real security gap found while wiring this up: the Gateway's catch-all proxy routes would have happily forwarded a public request straight through to any service's new internal-only `/internal/*` endpoints.
 
 ## Architecture
 
@@ -39,6 +40,8 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
    │                                                                 LinkedIn's browser redirect can't carry
    │                                                                 our Authorization header)
    │                          - /scrape-jobs, /scraped-documents/*   -> scraper service
+   │                          - every catch-all proxy rejects any /internal/* path with 404,
+   │                            regardless of destination service (see _reject_internal_paths)
    │                          - /sse/{job_id}                      -> subscribes to the same Redis
    │                                                                 pub/sub channel ai-generation
    │                                                                 publishes to, re-streams as SSE
@@ -126,6 +129,21 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
           background job: an internal asyncio loop (not the Scheduler Service's Celery
                     Beat) re-triggers daily/weekly recurring scrape jobs
 
+   └─► notification (FastAPI, :8011) — notification_log, processed_events (schema:
+          notification); mostly a consumer, minimal REST surface (just /healthz),
+          per the spec
+          consumes across FOUR separate exchanges:
+            user_events: user.registered (verification email)
+            domain_events: invite.created, member.joined, usage.threshold_reached
+            billing_events: invoice.paid, payment.failed
+            social_events: post.published, post.failed
+          publishes: notification.sent
+          calls Auth's and User/Tenant's new /internal/* endpoints directly
+          (service-to-service) to resolve an email address from a user_id or account_id —
+          most of these events don't carry an email address themselves
+          optional: posts payment.failed/post.failed as Slack ops alerts (logs instead
+          if SLACK_WEBHOOK_URL is unset)
+
 Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672),
        mongo (:27017, Scraper Service only)
 ```
@@ -200,6 +218,17 @@ Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:56
 - **Per-domain rate limiting is in-process, not distributed**: `app/rate_limiter.py` tracks the last request time per hostname in a plain dict guarded by an `asyncio.Lock`, sufficient for the single-worker deployment this scope assumes — scaling to multiple scraper worker replicas later would need this moved to a shared store (Redis) to stay accurate across them, which isn't done here.
 - **Recurring jobs use a genuinely different mechanism than Scheduler**: the spec calls for "an internal scheduler" here, as opposed to the dedicated Scheduler Service's Celery Beat setup — so `app/recurring.py` is a plain asyncio loop inside this one service (started in `main.py`'s lifespan, no extra containers), scanning for `scrape_jobs` documents whose `next_run_at` has passed. Each firing inserts a fresh one-off (`recurrence: "none"`) job document for that occurrence and advances the parent's `next_run_at`, mirroring the pattern Scheduler uses but self-contained.
 
+### Notification Service notes
+
+- **Retroactive fixes this slice needed to make elsewhere work**: most consumed events only carry an `account_id` or `user_id`, not an email — and a couple of email flows the spec explicitly calls for (working verification links, team-invite emails) were never actually wired end-to-end because Notification didn't exist yet when Auth and User/Tenant shipped. Three small additions, all backward-compatible:
+  - Auth's `user.registered` event now includes `verification_token` (previously only returned in the dev-only `dev_verification_token` API response field) — Notification builds the real `/verify-email?token=...` link from it.
+  - User/Tenant's `POST /accounts/{id}/invite` now actually publishes an `invite.created` event (`{invite_id, account_id, email, token, role}`) — previously it created the `Invite` row and returned a dev token but published nothing at all, so nothing could ever have emailed the invitee even once Notification existed.
+  - Two new **internal-only** endpoints: Auth's `GET /internal/users/{user_id}` (resolve email from user_id) and User/Tenant's `GET /internal/accounts/{account_id}/owner` (resolve the owner's user_id from account_id) — chained together (`app/identity_resolver.py`) to turn an `account_id`-only event into a recipient email.
+- **Real security gap found and fixed while wiring this up**: the Gateway's catch-all proxy routes (`/auth/{path:path}` etc.) matched on path prefix alone, so a public request to `/auth/internal/users/{id}` would have been happily forwarded straight through to Auth's new unauthenticated internal endpoint — trivially leaking any user's email to anyone on the internet. Fixed with `_reject_internal_paths()` in the Gateway's `app/api/routes.py`, applied to every proxy route (both the shared `_proxy_protected` helper and the standalone `/auth/*` proxy), rejecting any path segment starting with `internal` before it ever reaches `forward()`. Verified directly: `GET /auth/internal/users/<uuid>` now returns `404` from the Gateway itself, never reaching Auth.
+- **Four separate exchange bindings, one shared idempotency table**: `app/events.py` declares four independent queues (one per exchange: `user_events`, `domain_events`, `billing_events`, `social_events`), each with its own routing keys and DLX, but all four route through the same `processed_events` table for idempotency — safe because `event_id` is a UUID, globally unique regardless of which exchange it arrived on.
+- **Email failures are swallowed, not retried**: unlike most consumers in this codebase, `app/notify.py`'s `send_and_log()` never re-raises on a Resend API failure — it logs the failure to `notification_log` (status=`failed`) and returns normally. Emails are treated as inherently best-effort here (there's no real harm in occasionally missing one, unlike e.g. Scheduler's `content.scheduled`), so retrying via the bounded-retry-then-DLX mechanism wasn't judged worth the added complexity for this scope.
+- **Resend and the Slack webhook are both placeholders** (`re_placeholder`, empty `SLACK_WEBHOOK_URL`) — email sends will fail against the placeholder key (logged to `notification_log` as `status=failed`, per the point above) until a real Resend API key is set; Slack alerts just log a warning instead of posting when no webhook URL is configured, so ops alerts are still visible somewhere even unconfigured.
+
 Every FastAPI service shares `libs/py-shared`:
 - `jwt.py` — RS256 issue/decode helpers (Auth Service holds the private key; Gateway only needs the public key)
 - `rabbitmq.py` — durable topic-exchange publish with publisher confirms, and a consume() helper that enforces idempotent processing (via each service's own `processed_events` table) and bounded-retry-then-DLX delivery
@@ -223,7 +252,7 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 2. Sign up via the frontend (or `POST /auth/signup` on the Gateway) → a row appears in `auth.users`; a `user.registered` event is visible in the RabbitMQ management UI; the User/Tenant service consumes it exactly once, creating rows in `usertenant.accounts` and `usertenant.account_members` (check no duplicate account rows if you restart the `user-tenant` container mid-flow — the `processed_events` table should prevent double-processing).
 3. Log in → the returned JWT (paste into [jwt.io](https://jwt.io) to inspect) contains `user_id`, `account_id`, `role`, `jti`; the `jti` is present in Redis (`redis-cli KEYS 'jti:*'`) with a TTL matching the access token expiry.
 4. Log out → the `jti` is removed from Redis; a subsequent request with the old access token is rejected at the Gateway with `401 invalid_token`.
-5. Forgot-password → the OTP is returned in the dev-only `dev_otp` response field (and the reset flow works with it) since the Notification Service — which will send it by real email — doesn't exist until a later slice.
+5. Forgot-password → the OTP is returned in the dev-only `dev_otp` response field (and the reset flow works with it). This stays dev-only permanently, not just until a later slice: the platform spec's Notification Service event contract doesn't include `user.password_reset_requested` among its consumed events, so — unlike the verification-email flow, which Slice 10 wires to real email — password-reset OTPs are out of Notification's actual scope.
 6. `GET /me/accounts` (via the Account Switcher UI, or directly) returns every account a multi-account test user belongs to.
 
 ### Verifying Slice 2 (Billing) end-to-end
@@ -302,12 +331,22 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 5. Issue two scrape jobs targeting the same domain back-to-back — confirm (via timestamps in `scraped_documents` or scraper logs) they're at least `MIN_SECONDS_BETWEEN_REQUESTS_PER_DOMAIN` apart, not fired simultaneously.
 6. `POST /scrape-jobs` with `recurrence: "daily"` — confirm the parent job document persists with a `next_run_at` roughly 24h out; manually backdate `next_run_at` in Mongo to force it due, and confirm the next recurring-scan pass (every 60s) creates a new one-off job document, fires it, and pushes the parent's `next_run_at` forward by another 24h.
 
+### Verifying Slice 10 (Notification) end-to-end
+
+1. With a real `RESEND_API_KEY`, sign up a new user (Slice 1) — confirm a real verification email arrives with a **working** link (not just the `dev_verification_token` API field), and a `notification.notification_log` row with `status=sent` and a `provider_message_id`.
+2. Invite a teammate (`POST /accounts/{id}/invite`) — confirm the invitee receives a real invite email with a working accept link, sourced from the new `invite.created` event (previously this endpoint published nothing at all).
+3. Accept that invite — confirm the new member receives a "welcome to the team" email, resolved via `member.joined` → Auth's `/internal/users/{id}` lookup.
+4. Complete a Stripe checkout (Slice 2) — confirm the account owner receives a receipt email, resolved via `invoice.paid` → User/Tenant's `/internal/accounts/{id}/owner` → Auth's `/internal/users/{id}` (two chained internal calls).
+5. Trigger a `payment.failed`, or a `post.failed` (Slice 8) — confirm both an email to the owner **and** a Slack alert (or, with no `SLACK_WEBHOOK_URL` configured, a warning-level log line) fire.
+6. **Security check**: `curl http://localhost:8080/auth/internal/users/<any-uuid>` directly at the Gateway — confirm it returns `404` and never reaches Auth's actual endpoint (this was a real gap found while building this slice; confirm it stays fixed). Repeat for any other service's `/internal/*` path reachable through a Gateway catch-all.
+7. Stop the `notification` container mid-event-burst across all four exchanges (`user_events`, `domain_events`, `billing_events`, `social_events`) and restart it — confirm no duplicate emails send for any single event, and that events from all four exchanges resume being consumed (check each queue's consumer count in the RabbitMQ management UI).
+
 ## Repo layout
 
 ```
 services/
   gateway/  auth/  user-tenant/  billing/  credits/  usage/  ai-generation/  content/  scheduler/
-    social-publishing/  scraper/  (notification, admin — later slices)
+    social-publishing/  scraper/  notification/  (admin — later slice)
 frontend/
 libs/py-shared/
 docker-compose.yml
@@ -316,6 +355,6 @@ docker-compose.yml
 
 ## Roadmap (subsequent slices)
 
-Notification (replaces the dev-only OTP/verification-token logging from Slice 1 with real email) → Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
+Admin/Ops → frontend fill-in (dashboards, billing/credits pages, content studio with SSE, calendar, LinkedIn connections, SuperAdmin console) → reliability hardening pass (forced consumer restart with no data loss/duplication, across all services) → AWS deployment.
 
 Git workflow: `main` (protected, production) / `dev` (protected, integration) / `feature/*` / `fix/*`, PR + at least one review + passing CI before merge into `dev`; release PRs from `dev` to `main` trigger the AWS deployment pipeline. Conventional Commits (`feat:`, `fix:`, `chore:`, ...) throughout.

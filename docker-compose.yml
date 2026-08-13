@@ -283,6 +283,32 @@ services:
     ports:
       - "8010:8000"
 
+  notification:
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@postgres:5432/${POSTGRES_DB:-creditflow}
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      AUTH_SERVICE_URL: http://auth:8000
+      USER_TENANT_SERVICE_URL: http://user-tenant:8000
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:5173}
+      RESEND_API_KEY: ${RESEND_API_KEY:-re_placeholder}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-CreditFlow <onboarding@resend.dev>}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth:
+        condition: service_started
+      user-tenant:
+        condition: service_started
+    ports:
+      - "8011:8000"
+
   gateway:
     build:
       context: .

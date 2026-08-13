@@ -98,6 +98,8 @@ async def invite_member(
     session.add(invite)
     await session.commit()
 
+    await events.publish_invite_created(str(invite.id), str(account_id), body.email, token, body.role)
+
     return InviteResponse(invite_id=str(invite.id), dev_invite_token=token)
 
 
@@ -170,3 +172,19 @@ async def remove_member(
     target = await _require_membership(session, account_id, user_id)
     await session.delete(target)
     await session.commit()
+
+
+@router.get("/internal/accounts/{account_id}/owner")
+async def internal_get_account_owner(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes (see _reject_internal_paths in
+    services/gateway/app/api/routes.py) so this is unreachable from the
+    public internet. Used by the Notification Service to find who to
+    email for account-level events (invoice.paid, usage.threshold_reached,
+    etc.) that carry only an account_id, not a user_id."""
+    owner = await session.scalar(
+        select(AccountMember).where(AccountMember.account_id == account_id, AccountMember.role == "owner")
+    )
+    if not owner:
+        raise ApiError("not_found", "No owner found for this account.", 404)
+    return {"account_id": str(account_id), "user_id": str(owner.user_id)}

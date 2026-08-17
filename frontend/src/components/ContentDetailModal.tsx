@@ -42,10 +42,10 @@ export default function ContentDetailModal({ content, mode, onClose, onSave }: C
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-800 bg-slate-900 p-6">
+      <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">{editing ? "Edit content" : "Read content"}</h2>
-          <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs capitalize text-slate-300">
+          <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs capitalize text-slate-600 dark:text-slate-300">
             {content.status}
           </span>
         </div>
@@ -55,14 +55,14 @@ export default function ContentDetailModal({ content, mode, onClose, onSave }: C
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm font-medium outline-none focus:border-indigo-500"
               placeholder="Title"
             />
             <textarea
               rows={12}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+              className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
               placeholder="Content"
             />
           </div>
@@ -72,16 +72,16 @@ export default function ContentDetailModal({ content, mode, onClose, onSave }: C
             {content.image_url && (
               <img src={content.image_url} alt="" className="max-h-64 rounded-md" />
             )}
-            <p className="whitespace-pre-wrap text-sm text-slate-300">{content.body}</p>
+            <p className="whitespace-pre-wrap text-sm text-slate-600 dark:text-slate-300">{content.body}</p>
           </div>
         )}
 
-        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         <div className="mt-6 flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="rounded-md border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800"
+            className="rounded-md border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm hover:bg-slate-100 dark:hover:bg-slate-800"
           >
             Close
           </button>

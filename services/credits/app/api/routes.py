@@ -9,7 +9,7 @@ from app import billing_client
 from app.config import CENTS_PER_CREDIT, MARKETPLACE_MIN_DISCOUNT_PERCENT, PLAN_CREDIT_GRANTS
 from app.db import get_session
 from app.identity import Identity, require_identity
-from app.ledger import get_balance
+from app.ledger import get_balance, get_sellable_balance
 from app.models import CreditsLedger, MarketplaceListing
 from app.schemas import (
     BalanceResponse,
@@ -36,8 +36,10 @@ async def get_plan_grants() -> dict[str, int]:
 async def get_my_balance(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
 ) -> BalanceResponse:
-    balance = await get_balance(session, uuid.UUID(identity.account_id))
-    return BalanceResponse(account_id=identity.account_id, balance=balance)
+    account_id = uuid.UUID(identity.account_id)
+    balance = await get_balance(session, account_id)
+    sellable = await get_sellable_balance(session, account_id)
+    return BalanceResponse(account_id=identity.account_id, balance=balance, sellable_balance=sellable)
 
 
 @router.get("/internal/accounts/{account_id}/balance")
@@ -117,15 +119,23 @@ async def create_listing(
         )
 
     seller_account_id = uuid.UUID(identity.account_id)
-    balance = await get_balance(session, seller_account_id)
+    # Sellable, not raw, balance — the free signup bonus is usable for
+    # generation but can never be listed for sale (see
+    # ledger.get_sellable_balance).
     # NOTE: this checks available balance at listing time but doesn't lock
     # it — an account could list more credits across several concurrent
     # listings than it actually has. Acceptable simplification for this
     # slice; the debit only actually happens on a confirmed sale, at which
     # point a real shortfall would need reconciliation (documented, not
     # yet handled automatically).
-    if balance < body.credits_amount:
-        raise ApiError("insufficient_balance", "Not enough credits to list.", 400)
+    sellable_balance = await get_sellable_balance(session, seller_account_id)
+    if sellable_balance < body.credits_amount:
+        raise ApiError(
+            "insufficient_balance",
+            f"Not enough sellable credits to list — your free signup bonus can't be listed for sale "
+            f"(you can sell up to {sellable_balance} credits).",
+            400,
+        )
 
     listing = MarketplaceListing(
         seller_account_id=seller_account_id,

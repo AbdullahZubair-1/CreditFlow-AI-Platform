@@ -56,23 +56,23 @@ export default function LinkedInConnections() {
       <h1 className="text-2xl font-semibold">LinkedIn Connections</h1>
 
       {params.get("error") && (
-        <p className="mt-4 rounded-md bg-red-500/10 px-4 py-2 text-sm text-red-400">
+        <p className="mt-4 rounded-md bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400">
           LinkedIn connection failed ({params.get("error")}). Try again.
         </p>
       )}
       {params.get("connected") === "true" && (
-        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-400">
+        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400">
           LinkedIn account connected successfully.
         </p>
       )}
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
+      <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
         {status?.connected ? (
           <div className="flex items-center justify-between">
             <div>
-              <p className="font-medium text-emerald-400">Connected</p>
-              <p className="mt-1 text-sm text-slate-400">{status.linkedin_member_urn}</p>
+              <p className="font-medium text-emerald-600 dark:text-emerald-400">Connected</p>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{status.linkedin_member_urn}</p>
               {status.expires_at && (
                 <p className="text-xs text-slate-500">
                   Token valid until {new Date(status.expires_at).toLocaleDateString()}
@@ -81,14 +81,14 @@ export default function LinkedInConnections() {
             </div>
             <button
               onClick={() => setConfirmDisconnect(true)}
-              className="rounded-md border border-red-500/50 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10"
+              className="rounded-md border border-red-500/50 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-500/10"
             >
               Disconnect
             </button>
           </div>
         ) : (
           <div className="flex items-center justify-between">
-            <p className="text-slate-400">No LinkedIn account connected.</p>
+            <p className="text-slate-500 dark:text-slate-400">No LinkedIn account connected.</p>
             <button
               onClick={handleConnect}
               disabled={connecting}
@@ -101,9 +101,9 @@ export default function LinkedInConnections() {
       </div>
 
       <h2 className="mt-10 text-lg font-semibold">Publish history</h2>
-      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-left text-slate-400">
+          <thead className="bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
             <tr>
               <th className="px-4 py-2">Date</th>
               <th className="px-4 py-2">Status</th>
@@ -112,10 +112,10 @@ export default function LinkedInConnections() {
           </thead>
           <tbody>
             {jobs.map((job) => (
-              <tr key={job.id} className="border-t border-slate-800">
+              <tr key={job.id} className="border-t border-slate-200 dark:border-slate-800">
                 <td className="px-4 py-2">{new Date(job.created_at).toLocaleString()}</td>
                 <td className="px-4 py-2 capitalize">{job.status}</td>
-                <td className="px-4 py-2 text-slate-400">
+                <td className="px-4 py-2 text-slate-500 dark:text-slate-400">
                   {job.status === "published" ? job.linkedin_post_id : job.error_reason}
                 </td>
               </tr>

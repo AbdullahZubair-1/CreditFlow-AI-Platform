@@ -135,6 +135,25 @@ async def _handle_user_registered(payload: dict[str, Any]) -> None:
     await publish_member_joined(account_id, user_id, "owner")
 
 
+async def _handle_user_deleted(payload: dict[str, Any]) -> None:
+    """Auth deletes the User row itself and has no way to reach into this
+    service's schema to clean up membership — this is that cleanup.
+    Deliberately only removes AccountMember rows, not the Account itself:
+    an account's content/billing/credits history shouldn't vanish just
+    because the (possibly former sole) owner deleted their login, and an
+    account with zero remaining members is a harmless, inert row rather
+    than something requiring a cross-service cascade this slice doesn't
+    attempt."""
+    data = payload["data"]
+    user_id = uuid.UUID(data["user_id"])
+
+    async with async_session_factory() as session:
+        rows = await session.scalars(select(AccountMember).where(AccountMember.user_id == user_id))
+        for row in rows:
+            await session.delete(row)
+        await session.commit()
+
+
 async def _handle_invoice_paid(payload: dict[str, Any]) -> None:
     """Billing settles a payment and grants the plan_tier it billed for,
     but plan_tier itself lives on User/Tenant's accounts table (the
@@ -164,16 +183,24 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
         await _handle_invoice_paid(payload)  # same shape (account_id, plan_tier), same apply logic
 
 
+async def _route_user_event(payload: dict[str, Any]) -> None:
+    event_type = payload.get("event_type")
+    if event_type == "user.registered":
+        await _handle_user_registered(payload)
+    elif event_type == "user.deleted":
+        await _handle_user_deleted(payload)
+
+
 async def start_consumer() -> None:
     channel = await get_channel()
     queue = await declare_durable_queue_with_dlx(
-        channel, USER_EVENTS_EXCHANGE, QUEUE_NAME, routing_keys=["user.registered"]
+        channel, USER_EVENTS_EXCHANGE, QUEUE_NAME, routing_keys=["user.registered", "user.deleted"]
     )
     await consume(
         channel,
         queue,
         USER_EVENTS_EXCHANGE,
-        _handle_user_registered,
+        _route_user_event,
         _is_processed,
         _mark_processed,
     )

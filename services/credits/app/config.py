@@ -23,6 +23,12 @@ PLAN_CREDIT_GRANTS: dict[str, int] = {
     "team": 5000,
 }
 
+# One-time bonus granted when an account is first created (still on the
+# free plan at that point — PLAN_CREDIT_GRANTS above only fires on a paid
+# invoice, which a free account never has). Deliberately not sellable on
+# the marketplace — see ledger.get_sellable_balance.
+FREE_SIGNUP_BONUS_CREDITS = 50
+
 # Must match Billing's settings.cents_per_credit (services/billing/app/
 # config.py) — that's the official direct-purchase rate. MIN_DISCOUNT is
 # the platform-wide rule that a marketplace listing must always price its

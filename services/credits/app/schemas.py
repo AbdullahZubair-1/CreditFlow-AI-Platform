@@ -6,6 +6,10 @@ from pydantic import BaseModel
 class BalanceResponse(BaseModel):
     account_id: str
     balance: int
+    # Excludes the free signup bonus, which can never be listed on the
+    # marketplace (see ledger.get_sellable_balance) — surfaced here so the
+    # frontend can show "up to X sellable" without a second round trip.
+    sellable_balance: int
 
 
 class LedgerEntryResponse(BaseModel):

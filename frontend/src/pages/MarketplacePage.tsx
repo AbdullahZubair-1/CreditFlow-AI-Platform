@@ -89,21 +89,26 @@ export default function MarketplacePage() {
   return (
     <AppLayout>
       <h1 className="text-2xl font-semibold">Marketplace</h1>
-      <p className="mt-1 text-sm text-slate-400">
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
         Buy and sell surplus credits between accounts — always at least {MARKETPLACE_MIN_DISCOUNT_PERCENT}% cheaper
         than buying directly from us.
       </p>
 
       {params.get("purchase") === "success" && (
-        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-400">
+        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400">
           Purchase complete — credits will settle once Stripe confirms the payment.
         </p>
       )}
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
-        <p className="text-sm text-slate-400">Your balance</p>
+      <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+        <p className="text-sm text-slate-500 dark:text-slate-400">Your balance</p>
         <p className="mt-1 text-2xl font-semibold">{balance ? balance.balance.toLocaleString() : "—"} credits</p>
+        {balance && balance.sellable_balance < balance.balance && (
+          <p className="mt-1 text-xs text-slate-500">
+            {balance.sellable_balance.toLocaleString()} sellable — your free signup bonus can't be listed for sale.
+          </p>
+        )}
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">List surplus credits for sale</h2>
@@ -111,11 +116,12 @@ export default function MarketplacePage() {
         <input
           type="number"
           min={1}
+          max={balance?.sellable_balance}
           required
           placeholder="Credits amount"
           value={creditsAmount}
           onChange={(e) => setCreditsAmount(e.target.value)}
-          className="w-40 rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+          className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
         />
         <div>
           <input
@@ -126,7 +132,7 @@ export default function MarketplacePage() {
             placeholder="Price (USD)"
             value={priceUsd}
             onChange={(e) => setPriceUsd(e.target.value)}
-            className="w-40 rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+            className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
           />
           {maxTotalUsd && <p className="mt-1 text-xs text-slate-500">Max allowed: ${maxTotalUsd}</p>}
         </div>
@@ -140,13 +146,13 @@ export default function MarketplacePage() {
         {listings.map((listing) => {
           const isOwn = listing.seller_account_id === claims?.account_id;
           return (
-            <div key={listing.id} className="flex items-center justify-between rounded-lg border border-slate-800 p-4">
+            <div key={listing.id} className="flex items-center justify-between rounded-lg border border-slate-200 dark:border-slate-800 p-4">
               <div>
                 <p className="font-medium">{listing.credits_amount.toLocaleString()} credits</p>
-                <p className="text-sm text-slate-400">${(listing.price_cents / 100).toFixed(2)}</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400">${(listing.price_cents / 100).toFixed(2)}</p>
               </div>
               {isOwn ? (
-                <button onClick={() => setCancelTarget(listing.id)} className="text-sm text-red-400 hover:underline">
+                <button onClick={() => setCancelTarget(listing.id)} className="text-sm text-red-600 dark:text-red-400 hover:underline">
                   Cancel
                 </button>
               ) : (

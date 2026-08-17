@@ -40,7 +40,7 @@ export default function ForgotPassword() {
   }
 
   const inputClass =
-    "w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
+    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 
   if (step === "request") {
     return (
@@ -54,7 +54,7 @@ export default function ForgotPassword() {
             onChange={(e) => setEmail(e.target.value)}
             className={inputClass}
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
             Send code
           </button>
@@ -66,9 +66,9 @@ export default function ForgotPassword() {
   return (
     <AuthLayout title="Reset password">
       {devOtp && (
-        <p className="mb-4 text-sm text-slate-400">
+        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
           A one-time code would normally be emailed to you. For now, your code is: <br />
-          <span className="font-mono text-indigo-400">{devOtp}</span>
+          <span className="font-mono text-indigo-600 dark:text-indigo-400">{devOtp}</span>
         </p>
       )}
       <form onSubmit={handleReset} className="space-y-4">
@@ -88,7 +88,7 @@ export default function ForgotPassword() {
           onChange={(e) => setNewPassword(e.target.value)}
           className={inputClass}
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
           Reset password
         </button>

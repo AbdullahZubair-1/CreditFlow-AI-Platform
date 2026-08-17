@@ -143,25 +143,39 @@ async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
 
 
 async def _apply_checkout_session_completed(session, checkout_obj: dict[str, Any]) -> None:
-    """Subscription checkouts settle via invoice.paid instead; the only
-    checkout.session.completed we act on here is a one-time marketplace
-    purchase (see stripe_client.create_one_time_checkout_session), which
-    carries no invoice and must be translated into a domain event of its
+    """Subscription checkouts settle via invoice.paid instead; the
+    checkout.session.completed events we act on here are one-time
+    purchases (see stripe_client.create_one_time_checkout_session) that
+    carry no invoice and must be translated into a domain event of their
     own for the Credits Service to consume."""
     metadata = checkout_obj.get("metadata") or {}
-    if metadata.get("purpose") != "marketplace_purchase":
-        return
+    purpose = metadata.get("purpose")
 
-    add_outbox_event(
-        session,
-        "marketplace.payment_completed",
-        {
-            "listing_id": metadata["listing_id"],
-            "buyer_account_id": metadata["buyer_account_id"],
-            "seller_account_id": metadata["seller_account_id"],
-            "amount_cents": checkout_obj["amount_total"],
-        },
-    )
+    if purpose == "marketplace_purchase":
+        add_outbox_event(
+            session,
+            "marketplace.payment_completed",
+            {
+                "listing_id": metadata["listing_id"],
+                "buyer_account_id": metadata["buyer_account_id"],
+                "seller_account_id": metadata["seller_account_id"],
+                "amount_cents": checkout_obj["amount_total"],
+            },
+        )
+    elif purpose == "credit_purchase":
+        add_outbox_event(
+            session,
+            "credits.purchase_completed",
+            {
+                "account_id": metadata["account_id"],
+                "credits_amount": int(metadata["credits_amount"]),
+                # Stripe's checkout session id doubles as Credits' own
+                # idempotency key for this grant (see its
+                # _handle_credit_purchase_completed) — redelivery of this
+                # same webhook event can't double-grant credits.
+                "checkout_session_id": checkout_obj["id"],
+            },
+        )
 
 
 async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:

@@ -21,7 +21,7 @@ async def create_marketplace_checkout_session(
 ) -> str:
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
-            f"{settings.billing_service_url}/checkout-sessions/one-time",
+            f"{settings.billing_service_url}/internal/checkout-sessions/one-time",
             json={
                 "amount_cents": amount_cents,
                 "currency": "usd",

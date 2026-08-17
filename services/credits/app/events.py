@@ -183,6 +183,34 @@ async def _handle_marketplace_payment_completed(payload: dict[str, Any]) -> None
     await _maybe_emit_low_balance(buyer_account_id, buyer_entry.balance_after)
 
 
+async def _handle_credit_purchase_completed(payload: dict[str, Any]) -> None:
+    """Direct credit purchase, separate from a plan's automatic grant —
+    checkout_session_id (Stripe's own id for that checkout) is this
+    handler's idempotency key, the same role invoice_id plays for
+    _handle_invoice_paid, so a redelivered webhook can't double-grant."""
+    data = payload["data"]
+    account_id = uuid.UUID(data["account_id"])
+    credits_amount = data["credits_amount"]
+    checkout_session_id = data["checkout_session_id"]
+    if credits_amount <= 0:
+        return
+
+    async with async_session_factory() as session:
+        already_granted = await session.scalar(
+            select(CreditsLedger).where(
+                CreditsLedger.reference_id == checkout_session_id, CreditsLedger.reason == "direct_purchase"
+            )
+        )
+        if already_granted:
+            return
+
+        entry = await append_entry(session, account_id, credits_amount, "direct_purchase", checkout_session_id)
+        await session.commit()
+
+    await _publish("credits.credited", {"account_id": str(account_id), "amount": credits_amount, "reason": "direct_purchase"})
+    await _maybe_emit_low_balance(account_id, entry.balance_after)
+
+
 async def _handle_generation_completed(payload: dict[str, Any]) -> None:
     """AI Generation only checks *quota* (Usage Service) before streaming —
     it has no notion of a credits balance. This is the other half of the
@@ -229,6 +257,8 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
         await _handle_refund_issued(payload)
     elif event_type == "marketplace.payment_completed":
         await _handle_marketplace_payment_completed(payload)
+    elif event_type == "credits.purchase_completed":
+        await _handle_credit_purchase_completed(payload)
 
 
 async def _route_ai_event(payload: dict[str, Any]) -> None:
@@ -242,7 +272,7 @@ async def start_consumer() -> None:
         channel,
         BILLING_EVENTS_EXCHANGE,
         QUEUE_NAME,
-        routing_keys=["invoice.paid", "refund.issued", "marketplace.payment_completed"],
+        routing_keys=["invoice.paid", "refund.issued", "marketplace.payment_completed", "credits.purchase_completed"],
     )
     await consume(channel, queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)
     logger.info("credits consumer listening on %s", QUEUE_NAME)

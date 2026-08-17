@@ -28,6 +28,16 @@ class OneTimeCheckoutRequest(BaseModel):
     cancel_url: str
 
 
+class DirectCreditPurchaseRequest(BaseModel):
+    credits_amount: int
+    success_url: str
+    cancel_url: str
+
+
+class CreditsPricingResponse(BaseModel):
+    cents_per_credit: int
+
+
 class UpdateSubscriptionRequest(BaseModel):
     plan: str
 

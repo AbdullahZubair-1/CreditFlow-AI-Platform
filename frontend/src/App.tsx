@@ -10,12 +10,13 @@ import BillingInvoices from "./pages/BillingInvoices";
 import CalendarScheduler from "./pages/CalendarScheduler";
 import ContentStudio from "./pages/ContentStudio";
 import CreateOrJoinAccount from "./pages/CreateOrJoinAccount";
-import CreditsMarketplace from "./pages/CreditsMarketplace";
+import CreditsPage from "./pages/CreditsPage";
 import Dashboard from "./pages/Dashboard";
 import ForgotPassword from "./pages/ForgotPassword";
 import Home from "./pages/Home";
 import LinkedInConnections from "./pages/LinkedInConnections";
 import Login from "./pages/Login";
+import MarketplacePage from "./pages/MarketplacePage";
 import SignUp from "./pages/SignUp";
 import TeamManagement from "./pages/TeamManagement";
 import VerifyEmail from "./pages/VerifyEmail";
@@ -107,7 +108,15 @@ export default function App() {
             path="/dashboard/credits"
             element={
               <OwnerRoute>
-                <CreditsMarketplace />
+                <CreditsPage />
+              </OwnerRoute>
+            }
+          />
+          <Route
+            path="/dashboard/marketplace"
+            element={
+              <OwnerRoute>
+                <MarketplacePage />
               </OwnerRoute>
             }
           />

@@ -78,6 +78,31 @@ async def publish_generation_completed(
         logger.exception("failed to publish ai.generation_completed for job %s", generation_job_id)
 
 
+async def publish_image_generated(account_id: str, generation_job_id: str | None, image_url: str) -> None:
+    """Fired when the bonus 'generate image for this post' action
+    completes — separately from ai.generation_completed, since the image
+    is an optional follow-up action a user takes after text generation
+    already finished, not something known at completion time. Content
+    Service consumes this to attach the image to the draft it already
+    created for generation_job_id, closing the loop the spec asks for
+    ("store returned image, attach reference to content record")."""
+    if not generation_job_id:
+        return  # nothing to attach it to — ad-hoc image generation with no linked job
+    try:
+        channel = await get_channel()
+        await publish_event(
+            channel,
+            EXCHANGE,
+            "ai.image_generated",
+            _envelope(
+                "ai.image_generated",
+                {"account_id": account_id, "generation_job_id": generation_job_id, "image_url": image_url},
+            ),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to publish ai.image_generated for job %s", generation_job_id)
+
+
 async def publish_generation_failed(account_id: str, generation_job_id: str, model: str, reason: str) -> None:
     try:
         channel = await get_channel()

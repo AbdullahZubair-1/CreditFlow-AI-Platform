@@ -16,6 +16,22 @@ class GroqError(Exception):
     pass
 
 
+# Llama's instruct tuning defaults to Markdown (headers, **bold**, numbered
+# lists) unless told otherwise — fine for a chat UI, wrong here: this
+# content is meant to become a LinkedIn post (via Content -> Social
+# Publishing), and LinkedIn renders literal asterisks/hashes rather than
+# formatting them. Without this system message, generated posts showed
+# raw "**Key Features:**" markup instead of the plain, readable text a
+# real post needs.
+SYSTEM_PROMPT = (
+    "You are a professional social media content writer. Write in plain text only — "
+    "no Markdown formatting of any kind (no **bold**, no # headers, no numbered or "
+    "bulleted list syntax, no backticks). If you want to convey a list, write it as "
+    "plain sentences or lines separated by newlines, without leading symbols. Write "
+    "naturally, the way a person would write a LinkedIn post."
+)
+
+
 async def stream_completion(model: str, prompt: str) -> AsyncIterator[dict[str, Any]]:
     url = f"{settings.groq_base_url}/chat/completions"
     headers = {
@@ -24,7 +40,10 @@ async def stream_completion(model: str, prompt: str) -> AsyncIterator[dict[str, 
     }
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
         "stream": True,
         "stream_options": {"include_usage": True},
     }

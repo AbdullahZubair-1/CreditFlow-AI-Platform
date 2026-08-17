@@ -10,6 +10,17 @@ from app.db import Base
 
 class Content(Base):
     __tablename__ = "content"
+    # updated_at is server-generated (onupdate=func.now()) — without
+    # eager_defaults, the async ORM marks it "expired" after an UPDATE and
+    # only refetches it on next access via a plain synchronous attribute
+    # read, which isn't awaitable and crashes with MissingGreenlet outside
+    # of SQLAlchemy's own internal await chain. update_content() hits this
+    # every time (snapshot a version, commit, then rebuild the response
+    # from the same object) since it's the one write path that touches
+    # content.updated_at right after commit. eager_defaults makes every
+    # INSERT/UPDATE fetch server-generated columns back via RETURNING in
+    # the same round trip, so there's nothing left to lazily reload.
+    __mapper_args__ = {"eager_defaults": True}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)

@@ -36,7 +36,13 @@ class ContentVersion(Base):
     __tablename__ = "content_versions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    content_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("content.content.id"), nullable=False, index=True)
+    # ondelete="CASCADE" so deleting a Content row (see the DELETE
+    # /content/{id} endpoint) doesn't fail with a foreign key violation
+    # against its own version history — the versions are meaningless
+    # without the content they snapshot, so they should go with it.
+    content_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content.content.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)

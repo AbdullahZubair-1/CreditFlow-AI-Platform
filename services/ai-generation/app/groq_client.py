@@ -55,6 +55,16 @@ async def _utility_completion(system_prompt: str, user_content: str, max_tokens:
             {"role": "user", "content": user_content},
         ],
         "max_tokens": max_tokens,
+        # gpt-oss (UTILITY_MODEL) is a reasoning model: by default it spends
+        # its token budget "thinking" in a separate `reasoning` field before
+        # ever writing to `content`. max_tokens here was tuned for a
+        # non-reasoning model (llama) and is far too small to survive that —
+        # without this, a real request exhausted the entire 60-token budget
+        # on reasoning and returned finish_reason="length" with an empty
+        # content string, which the image-prompt caller's fallback then
+        # silently replaced with the *entire original post body*, crashing
+        # the DB insert once that got baked into a 1024-char URL column.
+        "reasoning_effort": "low",
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -91,8 +101,19 @@ async def generate_image_prompt(post_text: str) -> str:
     robot for anything AI-related). Grounding it in one concrete detail
     from the actual generated text instead produces something that
     genuinely reflects this specific post."""
-    result = await _utility_completion(IMAGE_PROMPT_SYSTEM_PROMPT, post_text, max_tokens=60)
-    return result or post_text
+    # 250, not 60: even at reasoning_effort="low" the model still spends a
+    # non-zero, input-dependent number of tokens reasoning before writing
+    # the actual answer — 60 was tuned for the old non-reasoning model and
+    # was still tight enough to occasionally exhaust itself on reasoning
+    # alone for a longer/more complex post, hitting finish_reason="length"
+    # with empty content again. This leaves reliable headroom regardless.
+    result = await _utility_completion(IMAGE_PROMPT_SYSTEM_PROMPT, post_text, max_tokens=250)
+    # Falling back to the *entire* post body (rather than a short prompt)
+    # is exactly what turned one empty-content response into a crash: the
+    # full text got URL-encoded into image_url, well past its 1024-char
+    # column limit. Capped here so this fallback can never do that again,
+    # regardless of why the completion came back empty.
+    return result or post_text[:200]
 
 
 async def generate_short_title(post_text: str) -> str:
@@ -101,7 +122,10 @@ async def generate_short_title(post_text: str) -> str:
     line, which content._derive_title's old first-line heuristic would
     just truncate mid-word. Asking for a real title directly is more
     reliable than trying to reverse-engineer one from the body text."""
-    return await _utility_completion(TITLE_SYSTEM_PROMPT, post_text, max_tokens=20)
+    # Same reasoning-headroom issue as generate_image_prompt above — 20
+    # tokens reliably left this with finish_reason="length" and empty
+    # content before it ever got past "thinking" about the title.
+    return await _utility_completion(TITLE_SYSTEM_PROMPT, post_text, max_tokens=150)
 
 
 async def stream_completion(model: str, prompt: str) -> AsyncIterator[dict[str, Any]]:
@@ -118,6 +142,14 @@ async def stream_completion(model: str, prompt: str) -> AsyncIterator[dict[str, 
         ],
         "stream": True,
         "stream_options": {"include_usage": True},
+        # Both AVAILABLE_MODELS entries are gpt-oss reasoning models — a
+        # live stream against real Groq showed roughly two-thirds of
+        # streamed tokens going to an invisible `reasoning` delta the UI
+        # never shows (see the note on _utility_completion above for why
+        # that matters more than just cost/latency). Writing a short social
+        # post doesn't need deep reasoning, so this trims that overhead
+        # without changing the actual output.
+        "reasoning_effort": "low",
     }
 
     async with httpx.AsyncClient(timeout=settings.generation_timeout_seconds) as client:

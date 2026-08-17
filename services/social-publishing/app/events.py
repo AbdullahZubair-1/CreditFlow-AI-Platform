@@ -168,6 +168,7 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
         {
             "scheduled_post_id": str(scheduled_post_id),
             "account_id": str(account_id),
+            "content_id": str(content_id),
             "linkedin_post_id": linkedin_post_id,
         },
     )

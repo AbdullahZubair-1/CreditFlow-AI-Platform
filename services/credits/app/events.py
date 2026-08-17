@@ -15,8 +15,10 @@ from py_shared.rabbitmq import consume, declare_durable_queue_with_dlx, get_conf
 logger = logging.getLogger("credits.events")
 
 BILLING_EVENTS_EXCHANGE = "billing_events"
+AI_EVENTS_EXCHANGE = "ai_events"
 DOMAIN_EVENTS_EXCHANGE = "domain_events"
 QUEUE_NAME = "credits.billing_events"
+AI_QUEUE_NAME = "credits.ai_events"
 
 _connection: aio_pika.abc.AbstractConnection | None = None
 _channel: aio_pika.abc.AbstractChannel | None = None
@@ -181,6 +183,44 @@ async def _handle_marketplace_payment_completed(payload: dict[str, Any]) -> None
     await _maybe_emit_low_balance(buyer_account_id, buyer_entry.balance_after)
 
 
+async def _handle_generation_completed(payload: dict[str, Any]) -> None:
+    """AI Generation only checks *quota* (Usage Service) before streaming —
+    it has no notion of a credits balance. This is the other half of the
+    spend loop: once a generation finishes and its real cost is known, debit
+    that amount from the account's credits ledger. reference_id is the
+    generation_job_id, which is unique per generation, so redelivery after a
+    crash between this commit and processed_events landing can't double-bill
+    the same job."""
+    data = payload["data"]
+    account_id = uuid.UUID(data["account_id"])
+    generation_job_id = data["generation_job_id"]
+    cost = data.get("cost_cents", 0)
+    if cost <= 0:
+        return
+
+    async with async_session_factory() as session:
+        already_debited = await session.scalar(
+            select(CreditsLedger).where(
+                CreditsLedger.reference_id == generation_job_id, CreditsLedger.reason == "ai_generation_debit"
+            )
+        )
+        if already_debited:
+            return
+
+        # Cost is charged in full even if it pushes the balance negative —
+        # the generation already happened and Usage already allowed it via
+        # its own separate quota check, so there is nothing left to gate
+        # here. A negative balance simply surfaces as "top up" pressure via
+        # the low-balance event below, same as any other overspend.
+        entry = await append_entry(session, account_id, -cost, "ai_generation_debit", generation_job_id)
+        await session.commit()
+
+    await _publish(
+        "credits.debited", {"account_id": str(account_id), "amount": cost, "reason": "ai_generation_debit"}
+    )
+    await _maybe_emit_low_balance(account_id, entry.balance_after)
+
+
 async def _route_billing_event(payload: dict[str, Any]) -> None:
     event_type = payload.get("event_type")
     if event_type == "invoice.paid":
@@ -189,6 +229,11 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
         await _handle_refund_issued(payload)
     elif event_type == "marketplace.payment_completed":
         await _handle_marketplace_payment_completed(payload)
+
+
+async def _route_ai_event(payload: dict[str, Any]) -> None:
+    if payload.get("event_type") == "ai.generation_completed":
+        await _handle_generation_completed(payload)
 
 
 async def start_consumer() -> None:
@@ -201,3 +246,12 @@ async def start_consumer() -> None:
     )
     await consume(channel, queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)
     logger.info("credits consumer listening on %s", QUEUE_NAME)
+
+    ai_queue = await declare_durable_queue_with_dlx(
+        channel,
+        AI_EVENTS_EXCHANGE,
+        AI_QUEUE_NAME,
+        routing_keys=["ai.generation_completed"],
+    )
+    await consume(channel, ai_queue, AI_EVENTS_EXCHANGE, _route_ai_event, _is_processed, _mark_processed)
+    logger.info("credits consumer listening on %s", AI_QUEUE_NAME)

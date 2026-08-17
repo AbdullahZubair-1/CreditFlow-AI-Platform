@@ -25,6 +25,7 @@ AUDITED_EXCHANGES = [
     "scraper_events",
     "ai_events",
     "webhook_events",
+    "usage_events",
 ]
 
 _connection: aio_pika.abc.AbstractConnection | None = None

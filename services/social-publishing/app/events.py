@@ -5,6 +5,7 @@ from typing import Any
 
 import aio_pika
 import httpx
+from sqlalchemy import update
 
 from app import content_client, linkedin_client
 from app.crypto import decrypt_token
@@ -79,6 +80,22 @@ async def _fail_permanently(job: PublishJob, reason: str) -> None:
     )
 
 
+async def _release_claim(job_id: uuid.UUID) -> None:
+    """Reverts a job's atomic claim (see _handle_content_scheduled) back to
+    'pending' after a transient failure, so the bounded-retry-then-DLX
+    mechanism can actually re-attempt it — without this, a job claimed via
+    the pending->publishing UPDATE would stay stuck in 'publishing' forever
+    after any retryable error, since retries would find status != 'pending'
+    and silently no-op instead of retrying."""
+    async with async_session_factory() as session:
+        await session.execute(
+            update(PublishJob)
+            .where(PublishJob.id == job_id, PublishJob.status == "publishing")
+            .values(status="pending")
+        )
+        await session.commit()
+
+
 async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
     data = payload["data"]
     scheduled_post_id = uuid.UUID(data["scheduled_post_id"])
@@ -87,12 +104,27 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
 
     async with async_session_factory() as session:
         job = await session.get(PublishJob, scheduled_post_id)
-        if job and job.status != "pending":
-            return  # already handled (redelivery)
+        if job and job.status not in ("pending",):
+            return  # already claimed, published, or permanently failed (redelivery)
         if not job:
             job = PublishJob(scheduled_post_id=scheduled_post_id, account_id=account_id, content_id=content_id)
             session.add(job)
             await session.commit()
+
+    # Atomically claim the job before making the real LinkedIn API call —
+    # this, not the read above, is what actually prevents a duplicate real
+    # LinkedIn post: two concurrent redeliveries of the same event can both
+    # pass the "status == pending" read, but only one of them can win this
+    # UPDATE ... WHERE status = 'pending'. The other sees rowcount == 0 and
+    # backs off instead of also calling LinkedIn.
+    async with async_session_factory() as session:
+        result = await session.execute(
+            update(PublishJob).where(PublishJob.id == job.id, PublishJob.status == "pending").values(status="publishing")
+        )
+        await session.commit()
+        if result.rowcount == 0:
+            logger.info("job %s already claimed by another delivery, skipping", job.id)
+            return
 
     async with async_session_factory() as session:
         connection = await session.get(SocialConnection, account_id)
@@ -106,6 +138,7 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
         if exc.response.status_code == 404:
             await _fail_permanently(job, "Content item no longer exists.")
             return
+        await _release_claim(job.id)
         raise  # transient — let it retry via the standard bounded-retry-then-DLX path
 
     access_token = decrypt_token(connection.access_token_encrypted)
@@ -120,6 +153,7 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
         )
     except LinkedInError:
         logger.exception("LinkedIn publish failed for job %s, will retry", job.id)
+        await _release_claim(job.id)
         raise  # transient (rate limit, 5xx, etc.) — bounded retry then DLX
 
     async with async_session_factory() as session:

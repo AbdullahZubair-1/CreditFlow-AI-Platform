@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aio_pika
+from sqlalchemy import select
 
 from app import email_client
 from app.db import async_session_factory
@@ -41,16 +42,35 @@ async def _publish_notification_sent(notification_type: str, recipient_email: st
         logger.exception("failed to publish notification.sent for %s", notification_type)
 
 
-async def send_and_log(notification_type: str, recipient_email: str, subject: str, html: str) -> None:
+async def send_and_log(
+    notification_type: str, recipient_email: str, subject: str, html: str, event_id: str | None = None
+) -> None:
     """Sends the email, and — regardless of success or failure — logs it
     to notification_log for auditing, per the spec's explicit requirement
-    ("Log every notification sent (type, recipient, status)")."""
+    ("Log every notification sent (type, recipient, status)").
+
+    event_id is this handler's own idempotency check (see the comment on
+    NotificationLog.source_event_id) — a crash between send_email()
+    succeeding and this function's own commit would otherwise cause a
+    redelivered event to send the same email twice."""
+    if event_id:
+        async with async_session_factory() as session:
+            already_sent = await session.scalar(
+                select(NotificationLog).where(
+                    NotificationLog.source_event_id == event_id, NotificationLog.status == "sent"
+                )
+            )
+            if already_sent:
+                logger.info("skipping duplicate send for event %s (%s)", event_id, notification_type)
+                return
+
     try:
         message_id = await email_client.send_email(recipient_email, subject, html)
     except EmailError as exc:
         async with async_session_factory() as session:
             session.add(
                 NotificationLog(
+                    source_event_id=event_id,
                     notification_type=notification_type,
                     recipient_email=recipient_email,
                     subject=subject,
@@ -65,6 +85,7 @@ async def send_and_log(notification_type: str, recipient_email: str, subject: st
     async with async_session_factory() as session:
         session.add(
             NotificationLog(
+                source_event_id=event_id,
                 notification_type=notification_type,
                 recipient_email=recipient_email,
                 subject=subject,

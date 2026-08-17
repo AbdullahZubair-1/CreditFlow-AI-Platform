@@ -45,6 +45,14 @@ def post_failed_email(reason: str) -> tuple[str, str]:
     return "Your scheduled post failed to publish", f"<p>We couldn't publish your scheduled post: {reason}</p>"
 
 
+def password_reset_email(otp: str) -> tuple[str, str]:
+    return (
+        "Your CreditFlow password reset code",
+        f"<p>Use this one-time code to reset your password: <b>{otp}</b></p>"
+        "<p>This code expires shortly and can only be used once. If you didn't request this, you can ignore this email.</p>",
+    )
+
+
 def usage_threshold_email(threshold: int, used_tokens: int, quota_tokens: int) -> tuple[str, str]:
     return (
         f"You've used {threshold}% of your usage quota",

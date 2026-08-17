@@ -42,6 +42,7 @@ async def create_scrape_job(
     doc = {
         "_id": job_id,
         "account_id": identity.account_id,
+        "user_id": identity.user_id,
         "target_url": body.target_url,
         "job_type": body.job_type,
         "status": "pending",

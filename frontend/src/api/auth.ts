@@ -1,8 +1,10 @@
 import { apiFetch } from "./client";
 
+// refresh_token is intentionally absent here — the Gateway strips it out
+// of every response and sets it as an httpOnly cookie instead (see
+// services/gateway/app/cookie_auth.py), so it never reaches frontend JS.
 export interface TokenPair {
   access_token: string;
-  refresh_token: string;
   token_type: string;
 }
 

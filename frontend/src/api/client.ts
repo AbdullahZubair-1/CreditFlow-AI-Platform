@@ -15,14 +15,25 @@ export class ApiError extends Error {
   }
 }
 
+// Access token lives in memory only, per the spec ("access token in
+// memory, refresh token in an httpOnly cookie set by the Gateway"). The
+// refresh token itself never reaches this file at all — the Gateway
+// (see services/gateway/app/cookie_auth.py) strips it out of every
+// login/refresh/switch-account response and sets it as an httpOnly cookie
+// instead, so no JS running on this page can ever read or exfiltrate it.
+//
+// A full-page navigation (e.g. the LinkedIn OAuth connect redirect) still
+// clears this in-memory variable, same as any page reload would — but
+// unlike the earlier sessionStorage-based approach, that's fine here: the
+// httpOnly cookie survives the reload on its own, and AuthProvider calls
+// tryRestoreSession() on mount to silently exchange it for a fresh access
+// token, so the user never has to re-authenticate.
 let accessToken: string | null = null;
-let refreshToken: string | null = null;
-let onTokensChanged: ((access: string | null, refresh: string | null) => void) | null = null;
+let onTokensChanged: ((access: string | null) => void) | null = null;
 
-export function setTokens(access: string | null, refresh: string | null) {
+export function setAccessToken(access: string | null) {
   accessToken = access;
-  refreshToken = refresh;
-  onTokensChanged?.(access, refresh);
+  onTokensChanged?.(access);
 }
 
 function getCurrentAccountId(): string | null {
@@ -34,7 +45,7 @@ export function getAccessToken() {
   return accessToken;
 }
 
-export function subscribeToTokenChanges(cb: (access: string | null, refresh: string | null) => void) {
+export function subscribeToTokenChanges(cb: (access: string | null) => void) {
   onTokensChanged = cb;
 }
 
@@ -48,23 +59,24 @@ async function parseErrorBody(res: Response): Promise<ApiError> {
   }
 }
 
-async function refreshAccessToken(): Promise<boolean> {
-  if (!refreshToken) return false;
-  // Pass the account_id the (now-expired) access token was scoped to, so
-  // silent refresh doesn't reset the user back to their default account
-  // if they'd switched away from it.
+// The refresh token cookie is httpOnly, so it's attached to this request
+// by the browser automatically (credentials: "include") — this file never
+// sees its value. account_id is passed so silent refresh doesn't reset the
+// user back to their default account if they'd switched away from it.
+export async function refreshAccessToken(): Promise<boolean> {
   const accountId = getCurrentAccountId();
   const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken, account_id: accountId }),
+    credentials: "include",
+    body: JSON.stringify({ account_id: accountId }),
   });
   if (!res.ok) {
-    setTokens(null, null);
+    setAccessToken(null);
     return false;
   }
   const data = await res.json();
-  setTokens(data.access_token, data.refresh_token);
+  setAccessToken(data.access_token);
   return true;
 }
 
@@ -80,6 +92,7 @@ export async function apiFetch<T>(
     return fetch(`${API_BASE_URL}${path}`, {
       method,
       headers,
+      credentials: "include",
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   };

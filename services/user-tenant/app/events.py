@@ -19,8 +19,10 @@ from py_shared.rabbitmq import (
 logger = logging.getLogger("user_tenant.events")
 
 USER_EVENTS_EXCHANGE = "user_events"
+BILLING_EVENTS_EXCHANGE = "billing_events"
 DOMAIN_EVENTS_EXCHANGE = "domain_events"
 QUEUE_NAME = "user_tenant.user_registered"
+BILLING_QUEUE_NAME = "user_tenant.billing_events"
 
 _connection: aio_pika.abc.AbstractConnection | None = None
 _channel: aio_pika.abc.AbstractChannel | None = None
@@ -50,6 +52,16 @@ async def publish_account_created(account_id: str, account_type: str, name: str)
         DOMAIN_EVENTS_EXCHANGE,
         "account.created",
         _envelope("account.created", {"account_id": account_id, "type": account_type, "name": name}),
+    )
+
+
+async def publish_account_updated(account_id: str, plan_tier: str) -> None:
+    channel = await get_channel()
+    await publish_event(
+        channel,
+        DOMAIN_EVENTS_EXCHANGE,
+        "account.updated",
+        _envelope("account.updated", {"account_id": account_id, "plan_tier": plan_tier}),
     )
 
 
@@ -123,6 +135,35 @@ async def _handle_user_registered(payload: dict[str, Any]) -> None:
     await publish_member_joined(account_id, user_id, "owner")
 
 
+async def _handle_invoice_paid(payload: dict[str, Any]) -> None:
+    """Billing settles a payment and grants the plan_tier it billed for,
+    but plan_tier itself lives on User/Tenant's accounts table (the
+    dashboard header, seat limits, etc. all read it from here) — without
+    this consumer, an account's displayed plan never actually changed after
+    a real upgrade, only Billing's own subscription row did."""
+    data = payload["data"]
+    account_id = uuid.UUID(data["account_id"])
+    plan_tier = data.get("plan_tier", "free")
+
+    async with async_session_factory() as session:
+        account = await session.get(Account, account_id)
+        if not account or account.plan_tier == plan_tier:
+            return  # nothing to do, or already applied (redelivery)
+
+        account.plan_tier = plan_tier
+        await session.commit()
+
+    await publish_account_updated(str(account_id), plan_tier)
+
+
+async def _route_billing_event(payload: dict[str, Any]) -> None:
+    event_type = payload.get("event_type")
+    if event_type == "invoice.paid":
+        await _handle_invoice_paid(payload)
+    elif event_type == "subscription.downgraded":
+        await _handle_invoice_paid(payload)  # same shape (account_id, plan_tier), same apply logic
+
+
 async def start_consumer() -> None:
     channel = await get_channel()
     queue = await declare_durable_queue_with_dlx(
@@ -137,3 +178,9 @@ async def start_consumer() -> None:
         _mark_processed,
     )
     logger.info("user-tenant consumer listening on %s", QUEUE_NAME)
+
+    billing_queue = await declare_durable_queue_with_dlx(
+        channel, BILLING_EVENTS_EXCHANGE, BILLING_QUEUE_NAME, routing_keys=["invoice.paid", "subscription.downgraded"]
+    )
+    await consume(channel, billing_queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)
+    logger.info("user-tenant consumer listening on %s", BILLING_QUEUE_NAME)

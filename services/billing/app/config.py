@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     outbox_poll_interval_seconds: float = 2.0
     dunning_grace_period_days: int = 3
+    dunning_scan_interval_seconds: float = 60.0
 
     class Config:
         env_file = ".env"

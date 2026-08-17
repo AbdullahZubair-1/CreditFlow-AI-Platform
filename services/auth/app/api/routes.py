@@ -102,7 +102,12 @@ async def signup(body: SignupRequest, session: AsyncSession = Depends(get_sessio
 
     await events.publish_user_registered(str(user.id), user.email, token)
 
-    return SignupResponse(user_id=str(user.id), email=user.email, dev_verification_token=token)
+    # token is deliberately NOT returned here — Notification actually
+    # emails the verification link now (same fix already applied to the
+    # forgot-password OTP). Returning it in the API response would let
+    # anyone skip email verification entirely for any signup, without
+    # ever touching the inbox that "verifies" they own it.
+    return SignupResponse(user_id=str(user.id), email=user.email)
 
 
 @router.post("/verify-email", status_code=204)

@@ -33,7 +33,7 @@ export function listMembers(accountId: string) {
 }
 
 export function inviteMember(accountId: string, email: string, role: string) {
-  return apiFetch<{ invite_id: string; dev_invite_token: string }>(`/accounts/${accountId}/invite`, {
+  return apiFetch<{ invite_id: string }>(`/accounts/${accountId}/invite`, {
     method: "POST",
     body: { email, role },
   });

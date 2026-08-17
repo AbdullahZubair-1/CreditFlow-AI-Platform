@@ -9,7 +9,6 @@ export default function ForgotPassword() {
   const [step, setStep] = useState<"request" | "reset">("request");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
-  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -18,10 +17,7 @@ export default function ForgotPassword() {
     e.preventDefault();
     setError(null);
     try {
-      const res = await forgotPassword(email);
-      // Dev-only: the Notification Service (a later slice) will email this
-      // OTP instead of returning it directly in the response.
-      setDevOtp(res.dev_otp ?? null);
+      await forgotPassword(email);
       setStep("reset");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -65,12 +61,9 @@ export default function ForgotPassword() {
 
   return (
     <AuthLayout title="Reset password">
-      {devOtp && (
-        <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-          A one-time code would normally be emailed to you. For now, your code is: <br />
-          <span className="font-mono text-indigo-600 dark:text-indigo-400">{devOtp}</span>
-        </p>
-      )}
+      <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+        We emailed a one-time code to <span className="font-medium">{email}</span>. Enter it below.
+      </p>
       <form onSubmit={handleReset} className="space-y-4">
         <input
           required

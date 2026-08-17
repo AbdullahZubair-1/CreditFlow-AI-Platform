@@ -9,7 +9,6 @@ class SignupRequest(BaseModel):
 class SignupResponse(BaseModel):
     user_id: str
     email: EmailStr
-    dev_verification_token: str | None = None
 
 
 class LoginRequest(BaseModel):

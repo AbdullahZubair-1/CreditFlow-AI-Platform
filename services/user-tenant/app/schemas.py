@@ -22,7 +22,6 @@ class InviteRequest(BaseModel):
 
 class InviteResponse(BaseModel):
     invite_id: str
-    dev_invite_token: str
 
 
 class AcceptInviteResponse(BaseModel):

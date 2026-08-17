@@ -9,7 +9,7 @@ export interface TokenPair {
 }
 
 export function signup(email: string, password: string) {
-  return apiFetch<{ user_id: string; email: string; dev_verification_token?: string }>("/auth/signup", {
+  return apiFetch<{ user_id: string; email: string }>("/auth/signup", {
     method: "POST",
     body: { email, password },
     auth: false,
@@ -41,7 +41,7 @@ export function verifyEmail(token: string) {
 }
 
 export function forgotPassword(email: string) {
-  return apiFetch<{ dev_otp?: string }>("/auth/forgot-password", {
+  return apiFetch<void>("/auth/forgot-password", {
     method: "POST",
     body: { email },
     auth: false,

@@ -29,8 +29,12 @@ settings = Settings()
 # At least 2 model choices, per the spec — one fast/cheap, one higher
 # quality. Both are real Groq-hosted model slugs; swap freely (Groq's
 # catalog changes over time — check https://console.groq.com/docs/models
-# if either of these gets deprecated).
+# if either of these gets deprecated). The previous llama-3.1-8b-instant /
+# llama-3.3-70b-versatile pair was fully removed from Groq's catalog
+# (confirmed via console.groq.com/docs/models, Aug 2026) and every
+# generation request was failing with a 404 model_not_found — replaced
+# with the gpt-oss pair, Groq's current production text models.
 AVAILABLE_MODELS: dict[str, str] = {
-    "fast": "llama-3.1-8b-instant",
-    "quality": "llama-3.3-70b-versatile",
+    "fast": "openai/gpt-oss-20b",
+    "quality": "openai/gpt-oss-120b",
 }

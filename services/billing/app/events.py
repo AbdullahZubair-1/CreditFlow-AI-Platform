@@ -101,6 +101,24 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
         await session.commit()
 
 
+def _price_id_from_invoice_line(line: dict[str, Any]) -> str | None:
+    """Stripe has shipped at least two different shapes for where an
+    invoice line item's Price id lives: the classic `line.price.id` /
+    `line.plan.id`, and the newer Invoice Rendering API's nested
+    `line.pricing.price_details.price` (a bare id string, not an object).
+    A live webhook against a real Stripe account came back in the newer
+    shape, which neither of the old lookups matched — silently returning
+    None here and falling all the way back to the (possibly stale)
+    Subscription.plan_tier, which is exactly the race this function exists
+    to avoid. Checking all three keeps this correct regardless of which
+    shape a given Stripe API version/account returns."""
+    price = line.get("price") or line.get("plan") or {}
+    price_id = price.get("id") if isinstance(price, dict) else None
+    if price_id:
+        return price_id
+    return line.get("pricing", {}).get("price_details", {}).get("price")
+
+
 def _plan_tier_from_invoice_lines(invoice_obj: dict[str, Any]) -> str | None:
     """Reads the plan directly off the invoice's own line items (each
     carries the Stripe Price actually billed) instead of trusting the
@@ -113,8 +131,7 @@ def _plan_tier_from_invoice_lines(invoice_obj: dict[str, Any]) -> str | None:
     lines = invoice_obj.get("lines", {}).get("data", [])
     if not lines:
         return None
-    price = lines[0].get("price") or lines[0].get("plan") or {}
-    return PRICE_ID_TO_PLAN.get(price.get("id"))
+    return PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(lines[0]))
 
 
 async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
@@ -241,8 +258,8 @@ async def _apply_subscription_updated(session, subscription_obj: dict[str, Any])
     subscription.stripe_subscription_id = subscription_obj["id"]
     subscription.status = subscription_obj["status"]
 
-    price_id = subscription_obj["items"]["data"][0]["price"]["id"]
-    plan_tier = PRICE_ID_TO_PLAN.get(price_id)
+    items = subscription_obj.get("items", {}).get("data", [])
+    plan_tier = PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(items[0])) if items else None
     if plan_tier:
         subscription.plan_tier = plan_tier
 

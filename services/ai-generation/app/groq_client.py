@@ -34,8 +34,9 @@ SYSTEM_PROMPT = (
 
 # Fast/cheap model for these — they're short utility transformations, not
 # the user-facing generation itself, so there's no reason to spend the
-# "quality" model's tokens on them.
-UTILITY_MODEL = "llama-3.1-8b-instant"
+# "quality" model's tokens on them. Kept in sync with AVAILABLE_MODELS["fast"]
+# in app/config.py (llama-3.1-8b-instant was removed from Groq's catalog).
+UTILITY_MODEL = "openai/gpt-oss-20b"
 
 
 async def _utility_completion(system_prompt: str, user_content: str, max_tokens: int) -> str:

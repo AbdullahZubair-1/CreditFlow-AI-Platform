@@ -69,6 +69,19 @@ async def _mark_processed(event_id: str) -> None:
         await session.commit()
 
 
+def _derive_title(response_text: str) -> str:
+    """A generated post's first line is almost always its actual topic
+    ("Introduction to FastAPI") — slicing the first N characters of the
+    whole blob instead (the previous approach) cuts mid-sentence and, once
+    the AI writes more than one line, drags the body's opening words in
+    right after the title with no separation. Using the first non-empty
+    line gives a real, short topic instead."""
+    first_line = next((line.strip() for line in response_text.splitlines() if line.strip()), "")
+    if not first_line:
+        return "Untitled draft"
+    return (first_line[:77] + "...") if len(first_line) > 80 else first_line
+
+
 async def _handle_generation_completed(payload: dict[str, Any]) -> None:
     data = payload["data"]
     if data.get("purpose") != "post":
@@ -86,11 +99,10 @@ async def _handle_generation_completed(payload: dict[str, Any]) -> None:
         if existing:
             return
 
-        title = (response_text[:57] + "...") if len(response_text) > 60 else (response_text or "Untitled draft")
         content = Content(
             account_id=account_id,
             created_by_user_id=user_id,
-            title=title or "Untitled draft",
+            title=_derive_title(response_text),
             body=response_text,
             status="draft",
             source_generation_job_id=generation_job_id,

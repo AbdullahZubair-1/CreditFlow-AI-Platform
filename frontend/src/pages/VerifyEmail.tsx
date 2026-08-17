@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { verifyEmail } from "../api/auth";
@@ -8,12 +8,25 @@ export default function VerifyEmail() {
   const [params] = useSearchParams();
   const token = params.get("token");
   const [status, setStatus] = useState<"pending" | "success" | "error">("pending");
+  // /verify-email is a one-shot server mutation (the token gets marked
+  // used on first success), not an idempotent read — so React 18 Strict
+  // Mode's deliberate double-invoke of effects in development would fire
+  // it twice: the first call succeeds, the second (same, now-used token)
+  // correctly gets rejected, and whichever response resolved last used to
+  // win the displayed status. This ref makes the real request fire only
+  // once per token no matter how many times the effect re-runs.
+  const requestedTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!token) {
       setStatus("error");
       return;
     }
+    if (requestedTokenRef.current === token) {
+      return;
+    }
+    requestedTokenRef.current = token;
+
     verifyEmail(token)
       .then(() => setStatus("success"))
       .catch(() => setStatus("error"));

@@ -26,6 +26,7 @@ async def scan_due_recurring_jobs() -> None:
             {
                 "_id": new_job_id,
                 "account_id": job["account_id"],
+                "user_id": job.get("user_id"),
                 "target_url": job["target_url"],
                 "job_type": job["job_type"],
                 "status": "pending",

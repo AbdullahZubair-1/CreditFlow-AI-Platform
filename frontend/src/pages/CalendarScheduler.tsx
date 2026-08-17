@@ -6,13 +6,15 @@ import { cancelSchedule, createSchedule, listScheduled, reschedule, type Schedul
 import AppLayout from "../components/AppLayout";
 import ConfirmDialog from "../components/ConfirmDialog";
 
-// A lightweight custom month grid rather than pulling in FullCalendar/React
-// Big Calendar (the spec's two suggested options) — avoids adding a new
-// npm dependency that can't be installed-and-verified in this environment.
-// Functionally equivalent for this scope: a month view of scheduled posts
-// with schedule/reschedule/cancel actions.
+// A lightweight custom month/week grid rather than pulling in
+// FullCalendar/React Big Calendar (the spec's two suggested options) —
+// avoids adding a new npm dependency that can't be installed-and-verified
+// in this environment. Functionally equivalent for this scope: month and
+// week views of scheduled posts with schedule/reschedule/cancel actions.
 export default function CalendarScheduler() {
+  const [viewMode, setViewMode] = useState<"month" | "week">("month");
   const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [scheduled, setScheduled] = useState<ScheduledPost[]>([]);
   const [drafts, setDrafts] = useState<Content[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -21,18 +23,34 @@ export default function CalendarScheduler() {
   const [error, setError] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
 
-  const monthEnd = useMemo(() => endOfMonth(monthStart), [monthStart]);
+  const rangeStart = viewMode === "month" ? monthStart : weekStart;
+  const rangeEnd = useMemo(
+    () => (viewMode === "month" ? endOfMonth(monthStart) : endOfWeek(weekStart)),
+    [viewMode, monthStart, weekStart]
+  );
 
   function refresh() {
-    listScheduled(monthStart, monthEnd).then(setScheduled).catch(() => undefined);
+    listScheduled(rangeStart, rangeEnd).then(setScheduled).catch(() => undefined);
   }
 
-  useEffect(refresh, [monthStart]);
+  useEffect(refresh, [viewMode, monthStart, weekStart]);
   useEffect(() => {
     listContent().then((all) => setDrafts(all.filter((c) => c.status !== "published"))).catch(() => undefined);
   }, []);
 
-  const days = useMemo(() => buildMonthGrid(monthStart), [monthStart]);
+  const days = useMemo(
+    () => (viewMode === "month" ? buildMonthGrid(monthStart) : buildWeekGrid(weekStart)),
+    [viewMode, monthStart, weekStart]
+  );
+
+  function goPrev() {
+    if (viewMode === "month") setMonthStart((d) => addMonths(d, -1));
+    else setWeekStart((d) => addDays(d, -7));
+  }
+  function goNext() {
+    if (viewMode === "month") setMonthStart((d) => addMonths(d, 1));
+    else setWeekStart((d) => addDays(d, 7));
+  }
 
   async function handleSchedule(e: React.FormEvent) {
     e.preventDefault();
@@ -78,19 +96,31 @@ export default function CalendarScheduler() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Calendar</h1>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setMonthStart((d) => addMonths(d, -1))}
-            className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800"
-          >
+          <div className="flex rounded-md border border-slate-700 text-sm">
+            <button
+              onClick={() => setViewMode("month")}
+              className={`px-3 py-1.5 ${viewMode === "month" ? "bg-indigo-500 text-white" : "hover:bg-slate-800"}`}
+            >
+              Month
+            </button>
+            <button
+              onClick={() => setViewMode("week")}
+              className={`px-3 py-1.5 ${viewMode === "week" ? "bg-indigo-500 text-white" : "hover:bg-slate-800"}`}
+            >
+              Week
+            </button>
+          </div>
+          <button onClick={goPrev} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
             Prev
           </button>
           <span className="text-sm text-slate-300">
-            {monthStart.toLocaleString(undefined, { month: "long", year: "numeric" })}
+            {viewMode === "month"
+              ? monthStart.toLocaleString(undefined, { month: "long", year: "numeric" })
+              : `${weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${endOfWeek(
+                  weekStart
+                ).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
           </span>
-          <button
-            onClick={() => setMonthStart((d) => addMonths(d, 1))}
-            className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800"
-          >
+          <button onClick={goNext} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
             Next
           </button>
         </div>
@@ -107,7 +137,7 @@ export default function CalendarScheduler() {
       </div>
       <div className="grid grid-cols-7 gap-1">
         {days.map((day) => {
-          const inMonth = day.getMonth() === monthStart.getMonth();
+          const inMonth = viewMode === "week" || day.getMonth() === monthStart.getMonth();
           const postsToday = scheduled.filter((p) => sameDay(new Date(p.publish_at), day));
           return (
             <button
@@ -228,6 +258,24 @@ function endOfMonth(d: Date) {
 }
 function addMonths(d: Date, n: number) {
   return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+function startOfWeek(d: Date) {
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  start.setDate(start.getDate() - start.getDay());
+  return start;
+}
+function endOfWeek(d: Date) {
+  const end = addDays(startOfWeek(d), 6);
+  end.setHours(23, 59, 59);
+  return end;
+}
+function addDays(d: Date, n: number) {
+  const result = new Date(d);
+  result.setDate(result.getDate() + n);
+  return result;
+}
+function buildWeekGrid(weekStart: Date): Date[] {
+  return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 }
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();

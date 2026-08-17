@@ -34,7 +34,7 @@ class PublishJob(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     content_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
-    # pending | published | failed
+    # pending | publishing | published | failed
     linkedin_post_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     error_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -116,8 +116,21 @@ async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
         {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc)}},
     )
 
+    # account_id, title, and a text excerpt ride along on the event itself
+    # (rather than requiring Content to call back into Scraper for the
+    # document) so Content Service can turn a completed scrape straight
+    # into a usable draft with no extra round trip.
     await _publish_result(
-        "scrape.completed", {"scrape_job_id": scrape_job_id, "document_id": document_id, "url": target_url}
+        "scrape.completed",
+        {
+            "scrape_job_id": scrape_job_id,
+            "document_id": document_id,
+            "account_id": job["account_id"] if job else data.get("account_id"),
+            "user_id": job.get("user_id") if job else None,
+            "url": target_url,
+            "title": result["title"],
+            "text_excerpt": result["text_content"][:5000],
+        },
     )
 
 

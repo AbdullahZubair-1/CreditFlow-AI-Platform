@@ -1,0 +1,55 @@
+name: CI
+
+# No test suite exists yet for this project (see README) — this CI is
+# scoped to what can actually be verified without one: the frontend's
+# real type-check + build, a Python syntax check across every service and
+# the shared library, and a Docker build of every service's image. This
+# is intentionally the minimum "does this even compile/build" gate rather
+# than a claim that a full test suite runs here.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile every service and the shared library
+        run: |
+          python -m compileall -q libs/py-shared/py_shared
+          for service_dir in services/*/app; do
+            echo "Compiling $service_dir"
+            python -m compileall -q "$service_dir"
+          done
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all service images
+        # Doesn't need real secrets — building an image only runs each
+        # Dockerfile's build-time steps (pip install, npm install, etc.),
+        # not the application itself, so the .env this repo deliberately
+        # never commits isn't required here.
+        run: docker compose build

@@ -258,9 +258,13 @@ async def forgot_password(
     )
     await session.commit()
 
-    await events.publish_password_reset_requested(str(user.id), user.email)
+    await events.publish_password_reset_requested(str(user.id), user.email, otp)
 
-    return ForgotPasswordResponse(dev_otp=otp)
+    # otp is deliberately NOT returned here now that Notification actually
+    # emails it (see events.publish_password_reset_requested) — returning
+    # it in the API response would let anyone reset any account's password
+    # just by knowing their email, without ever touching their inbox.
+    return ForgotPasswordResponse()
 
 
 @router.post("/reset-password", status_code=204)

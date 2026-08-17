@@ -49,11 +49,17 @@ async def publish_user_logged_in(user_id: str) -> None:
     }))
 
 
-async def publish_password_reset_requested(user_id: str, email: str) -> None:
+async def publish_password_reset_requested(user_id: str, email: str, otp: str) -> None:
     channel = await get_channel()
     await publish_event(
         channel,
         EXCHANGE,
         "user.password_reset_requested",
-        _envelope("user.password_reset_requested", {"user_id": user_id, "email": email}),
+        _envelope(
+            "user.password_reset_requested",
+            # otp added so Notification can actually email it — without it,
+            # the OTP only ever reached the user via the dev-only response
+            # field, which is not "works end-to-end by email" per the spec.
+            {"user_id": user_id, "email": email, "otp": otp},
+        ),
     )

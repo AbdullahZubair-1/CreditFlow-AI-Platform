@@ -18,6 +18,11 @@ logger = logging.getLogger("usage.events")
 AI_EVENTS_EXCHANGE = "ai_events"
 BILLING_EVENTS_EXCHANGE = "billing_events"
 DOMAIN_EVENTS_EXCHANGE = "domain_events"
+# The spec names a dedicated "usage_events" topic exchange for this
+# domain's own events, same treatment as Billing's "billing_events" and
+# Social Publishing's "social_events" — usage.threshold_reached publishes
+# here instead of the shared domain_events exchange.
+USAGE_EVENTS_EXCHANGE = "usage_events"
 GENERATION_QUEUE = "usage.ai_generation_completed"
 PLAN_QUEUE = "usage.subscription_updated"
 
@@ -47,7 +52,7 @@ async def _publish_threshold_reached(account_id: str, threshold: int, used: int,
         channel = await get_channel()
         await publish_event(
             channel,
-            DOMAIN_EVENTS_EXCHANGE,
+            USAGE_EVENTS_EXCHANGE,
             "usage.threshold_reached",
             _envelope(
                 "usage.threshold_reached",

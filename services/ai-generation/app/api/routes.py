@@ -6,7 +6,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import events, pollinations_client, pubsub, usage_client
+from app import events, groq_client, pollinations_client, pubsub, usage_client
+from app.groq_client import GroqError
 from app.config import AVAILABLE_MODELS
 from app.db import get_session
 from app.generation import run_generation
@@ -132,11 +133,17 @@ async def generate_image(
     if not job or job.account_id != uuid.UUID(identity.account_id):
         raise ApiError("not_found", "Generation job not found.", 404)
 
-    image_url = pollinations_client.build_image_url(body.prompt)
+    try:
+        image_prompt = await groq_client.generate_image_prompt(body.prompt)
+    except GroqError:
+        logger.exception("failed to expand image prompt, falling back to raw topic")
+        image_prompt = body.prompt
+
+    image_url = pollinations_client.build_image_url(image_prompt)
     image_job = ImageGenerationJob(
         generation_job_id=job_id,
         account_id=uuid.UUID(identity.account_id),
-        prompt=body.prompt,
+        prompt=image_prompt,
         image_url=image_url,
         status="completed",
     )

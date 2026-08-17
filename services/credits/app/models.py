@@ -19,7 +19,14 @@ class CreditsLedger(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     delta: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(String(32), nullable=False)
-    reference_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Stripe checkout session ids (used as the idempotency key for a direct
+    # credit purchase) run well past 64 characters — a real purchase
+    # (cs_test_a1xj...) hit StringDataRightTruncationError against the old
+    # limit, meaning every "buy extra credits" purchase was silently
+    # failing at the ledger insert. Widened to comfortably fit any Stripe
+    # object id used here (invoice, checkout session, listing, generation
+    # job id).
+    reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

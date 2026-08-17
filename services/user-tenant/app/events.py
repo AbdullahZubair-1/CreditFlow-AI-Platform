@@ -179,8 +179,18 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
     event_type = payload.get("event_type")
     if event_type == "invoice.paid":
         await _handle_invoice_paid(payload)
-    elif event_type == "subscription.downgraded":
-        await _handle_invoice_paid(payload)  # same shape (account_id, plan_tier), same apply logic
+    elif event_type in ("subscription.downgraded", "subscription.updated"):
+        # subscription.updated fires from PATCH /billing/subscription (an
+        # existing paid account switching plans, e.g. Pro -> Team) — a
+        # completely separate path from the checkout-driven invoice.paid
+        # flow above, and until now nothing here ever listened for it at
+        # all: Billing's own Subscription.plan_tier flipped immediately,
+        # but this service's Account.plan_tier (what every paid-feature
+        # gate in the Gateway and frontend actually reads) never did,
+        # so a mid-cycle plan change silently never unlocked anything.
+        # Same shape (account_id, plan_tier) as invoice.paid, same apply
+        # logic.
+        await _handle_invoice_paid(payload)
 
 
 async def _route_user_event(payload: dict[str, Any]) -> None:
@@ -207,7 +217,10 @@ async def start_consumer() -> None:
     logger.info("user-tenant consumer listening on %s", QUEUE_NAME)
 
     billing_queue = await declare_durable_queue_with_dlx(
-        channel, BILLING_EVENTS_EXCHANGE, BILLING_QUEUE_NAME, routing_keys=["invoice.paid", "subscription.downgraded"]
+        channel,
+        BILLING_EVENTS_EXCHANGE,
+        BILLING_QUEUE_NAME,
+        routing_keys=["invoice.paid", "subscription.downgraded", "subscription.updated"],
     )
     await consume(channel, billing_queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)
     logger.info("user-tenant consumer listening on %s", BILLING_QUEUE_NAME)

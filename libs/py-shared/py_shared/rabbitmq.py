@@ -11,6 +11,8 @@ Conventions enforced here (per the platform spec):
 from __future__ import annotations
 
 import asyncio
+import datetime
+import decimal
 import json
 import logging
 import os
@@ -21,6 +23,22 @@ from aio_pika import DeliveryMode, ExchangeType, Message
 from aio_pika.abc import AbstractIncomingMessage
 
 logger = logging.getLogger("py_shared.rabbitmq")
+
+
+def _json_default(value: Any) -> Any:
+    """Handles the handful of common Python types that aren't natively
+    JSON-serializable but show up regularly in event payloads sourced from
+    third-party SDKs — Stripe's Event objects in particular return several
+    numeric fields (tax amounts, exchange rates) as decimal.Decimal rather
+    than float or int, which crashed publish_event with a bare
+    `TypeError: Object of type Decimal is not JSON serializable` on every
+    Stripe webhook carrying one of those fields, even after converting the
+    outer Event object itself to a plain dict."""
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 MAX_RETRIES = 5
 CONNECT_MAX_ATTEMPTS = 10
@@ -78,7 +96,7 @@ async def publish_event(
 ) -> None:
     exchange = await channel.declare_exchange(exchange_name, ExchangeType.TOPIC, durable=True)
     message = Message(
-        body=json.dumps(payload).encode(),
+        body=json.dumps(payload, default=_json_default).encode(),
         delivery_mode=DeliveryMode.PERSISTENT,
         content_type="application/json",
     )

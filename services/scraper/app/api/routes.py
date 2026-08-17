@@ -72,6 +72,34 @@ async def get_scrape_job(job_id: str, identity: Identity = Depends(require_ident
     return _job_to_response(doc)
 
 
+@router.get("/scrape-jobs/{job_id}/document", response_model=ScrapedDocumentResponse)
+async def get_scrape_job_document(job_id: str, identity: Identity = Depends(require_identity)) -> ScrapedDocumentResponse:
+    """The scrape job document itself never stores a document_id back-reference
+    (only scraped_documents -> scrape_job_id exists), so a caller who only has
+    the job id — the normal case for a frontend polling job status — had no
+    way to reach the resulting document without already knowing its id."""
+    job = await mongo.scrape_jobs().find_one({"_id": job_id, "account_id": identity.account_id})
+    if not job:
+        raise ApiError("not_found", "Scrape job not found.", 404)
+
+    # Recurring jobs re-run and produce a new document each time, so take the
+    # most recent one rather than whichever Mongo happens to return first.
+    doc = await mongo.scraped_documents().find_one(
+        {"scrape_job_id": job_id}, sort=[("created_at", -1)]
+    )
+    if not doc:
+        raise ApiError("not_found", "No document yet for this scrape job.", 404)
+
+    return ScrapedDocumentResponse(
+        id=doc["_id"],
+        scrape_job_id=doc["scrape_job_id"],
+        url=doc["url"],
+        title=doc["title"],
+        text_content=doc["text_content"],
+        created_at=doc["created_at"],
+    )
+
+
 @router.get("/scraped-documents/{document_id}", response_model=ScrapedDocumentResponse)
 async def get_scraped_document(document_id: str, identity: Identity = Depends(require_identity)) -> ScrapedDocumentResponse:
     doc = await mongo.scraped_documents().find_one({"_id": document_id})

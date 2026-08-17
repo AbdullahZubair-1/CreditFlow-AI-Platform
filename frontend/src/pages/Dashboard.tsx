@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { listMembers } from "../api/accounts";
-import { getSubscription, type Subscription } from "../api/billing";
 import { ApiError } from "../api/client";
-import { getBalance, type Balance } from "../api/credits";
-import { getUsageSummary, type UsageSummary } from "../api/usage";
+import { getDashboardSummary, type DashboardSummary } from "../api/dashboard";
 import AppLayout from "../components/AppLayout";
 import StatCard from "../components/StatCard";
 import { useAuth } from "../context/AuthContext";
@@ -16,29 +13,21 @@ export default function Dashboard() {
   const { claims } = useAuth();
   const isOwner = claims ? OWNER_ROLES.has(claims.role) : false;
 
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [balance, setBalance] = useState<Balance | null>(null);
-  const [usage, setUsage] = useState<UsageSummary | null>(null);
-  const [memberCount, setMemberCount] = useState<number | null>(null);
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOwner || !claims) return;
 
-    Promise.all([
-      getSubscription().catch(() => null),
-      getBalance().catch(() => null),
-      getUsageSummary().catch(() => null),
-      listMembers(claims.account_id).catch(() => null),
-    ])
-      .then(([sub, bal, use, members]) => {
-        setSubscription(sub);
-        setBalance(bal);
-        setUsage(use);
-        setMemberCount(members?.length ?? null);
-      })
+    getDashboardSummary()
+      .then(setSummary)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load dashboard data."));
   }, [isOwner, claims?.account_id]);
+
+  const subscription = summary?.subscription ?? null;
+  const balance = summary?.credits_balance ?? null;
+  const usage = summary?.usage ?? null;
+  const memberCount = summary?.account?.member_count ?? null;
 
   if (!isOwner) {
     return (

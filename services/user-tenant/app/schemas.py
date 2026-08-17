@@ -9,6 +9,7 @@ class AccountResponse(BaseModel):
     name: str
     plan_tier: str
     role: str
+    member_count: int = 1
 
 
 class CreateTeamAccountRequest(BaseModel):

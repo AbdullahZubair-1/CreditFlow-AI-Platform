@@ -18,6 +18,7 @@ import {
 import AppLayout from "../components/AppLayout";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ContentDetailModal from "../components/ContentDetailModal";
+import ContentVersionHistoryModal from "../components/ContentVersionHistoryModal";
 import { useAuth } from "../context/AuthContext";
 
 const APPROVE_ROLES = new Set(["owner", "admin"]);
@@ -36,6 +37,7 @@ export default function ContentStudio() {
   const [drafts, setDrafts] = useState<Content[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [detailTarget, setDetailTarget] = useState<{ content: Content; mode: "read" | "edit" } | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<Content | null>(null);
   const [imageGenerating, setImageGenerating] = useState(false);
   const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const stopStreamRef = useRef<(() => void) | null>(null);
@@ -245,6 +247,12 @@ export default function ContentStudio() {
                 >
                   Edit
                 </button>
+                <button
+                  onClick={() => setHistoryTarget(content)}
+                  className="text-xs text-slate-600 dark:text-slate-300 hover:underline"
+                >
+                  History
+                </button>
                 {canApprove && content.status === "draft" && (
                   <button
                     onClick={() => handleApprove(content)}
@@ -285,6 +293,10 @@ export default function ContentStudio() {
           onClose={() => setDetailTarget(null)}
           onSave={handleSaveDetail}
         />
+      )}
+
+      {historyTarget && (
+        <ContentVersionHistoryModal content={historyTarget} onClose={() => setHistoryTarget(null)} />
       )}
     </AppLayout>
   );

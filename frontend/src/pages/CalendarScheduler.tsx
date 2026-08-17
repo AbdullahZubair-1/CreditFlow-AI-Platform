@@ -16,7 +16,7 @@ export default function CalendarScheduler() {
   const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [scheduled, setScheduled] = useState<ScheduledPost[]>([]);
-  const [drafts, setDrafts] = useState<Content[]>([]);
+  const [schedulableContent, setSchedulableContent] = useState<Content[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedContentId, setSelectedContentId] = useState("");
   const [recurrence, setRecurrence] = useState("none");
@@ -35,7 +35,11 @@ export default function CalendarScheduler() {
 
   useEffect(refresh, [viewMode, monthStart, weekStart]);
   useEffect(() => {
-    listContent().then((all) => setDrafts(all.filter((c) => c.status !== "published"))).catch(() => undefined);
+    // Only approved content can actually be scheduled (enforced
+    // server-side too, see Scheduler's POST /scheduled) — a draft
+    // shouldn't show up as a schedulable option before someone's
+    // approved it in Content Studio.
+    listContent().then((all) => setSchedulableContent(all.filter((c) => c.status === "approved"))).catch(() => undefined);
   }, []);
 
   const days = useMemo(
@@ -208,19 +212,26 @@ export default function CalendarScheduler() {
           </div>
 
           <form onSubmit={handleSchedule} className="mt-4 flex flex-wrap items-end gap-3">
-            <select
-              required
-              value={selectedContentId}
-              onChange={(e) => setSelectedContentId(e.target.value)}
-              className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
-            >
-              <option value="">Choose content...</option>
-              {drafts.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
+            <div>
+              <select
+                required
+                value={selectedContentId}
+                onChange={(e) => setSelectedContentId(e.target.value)}
+                className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+              >
+                <option value="">Choose content...</option>
+                {schedulableContent.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+              {schedulableContent.length === 0 && (
+                <p className="mt-1 text-xs text-slate-500">
+                  No approved content yet — approve a draft in Content Studio first.
+                </p>
+              )}
+            </div>
             <select
               value={recurrence}
               onChange={(e) => setRecurrence(e.target.value)}

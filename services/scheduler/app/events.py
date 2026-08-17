@@ -74,14 +74,48 @@ async def _handle_content_created(payload: dict[str, Any]) -> None:
         existing = await session.get(AvailableContent, content_id)
         if existing:
             return
-        session.add(AvailableContent(content_id=content_id, account_id=account_id))
+        # content.created always fires for a brand-new draft, so "draft"
+        # is the correct starting status regardless of what a later
+        # content.updated redelivery might otherwise suggest.
+        session.add(AvailableContent(content_id=content_id, account_id=account_id, status="draft"))
         await session.commit()
+
+
+async def _handle_content_updated(payload: dict[str, Any]) -> None:
+    """Keeps the cached status in sync with Content's actual status
+    machine (draft -> approved -> published) — without this, Scheduler
+    would only ever know a content item as "draft" (whatever it was at
+    creation) and could never actually enforce "only approved content can
+    be scheduled"."""
+    data = payload["data"]
+    content_id = uuid.UUID(data["content_id"])
+    status = data.get("status")
+    if not status:
+        return
+
+    async with async_session_factory() as session:
+        row = await session.get(AvailableContent, content_id)
+        if not row:
+            # content.updated arrived before content.created's own
+            # redelivery settled, or the cache row was never created for
+            # some other reason — nothing to update yet.
+            return
+        row.status = status
+        await session.commit()
+
+
+async def _route_domain_event(payload: dict[str, Any]) -> None:
+    event_type = payload.get("event_type")
+    if event_type == "content.created":
+        await _handle_content_created(payload)
+    elif event_type == "content.updated":
+        await _handle_content_updated(payload)
 
 
 async def start_consumer() -> None:
     channel = await get_channel()
     queue = await declare_durable_queue_with_dlx(
-        channel, DOMAIN_EVENTS_EXCHANGE, CONTENT_QUEUE, routing_keys=["content.created"]
+        channel, DOMAIN_EVENTS_EXCHANGE, CONTENT_QUEUE, routing_keys=["content.created", "content.updated"]
     )
-    await consume(channel, queue, DOMAIN_EVENTS_EXCHANGE, _handle_content_created, _is_processed, _mark_processed)
+    await consume(channel, queue, DOMAIN_EVENTS_EXCHANGE, _route_domain_event, _is_processed, _mark_processed)
     logger.info("scheduler consumer listening on %s", CONTENT_QUEUE)

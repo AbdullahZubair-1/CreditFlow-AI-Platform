@@ -28,14 +28,16 @@ class ScheduledPost(Base):
 
 
 class AvailableContent(Base):
-    """Local read cache populated from Content's content.created events —
-    lets scheduling validate a content_id belongs to the caller's account
-    without a live cross-service call on every request."""
+    """Local read cache populated from Content's content.created/updated
+    events — lets scheduling validate a content_id belongs to the caller's
+    account (and is actually approved) without a live cross-service call
+    on every request."""
 
     __tablename__ = "available_content"
 
     content_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

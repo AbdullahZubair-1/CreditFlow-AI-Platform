@@ -36,10 +36,29 @@ export default function ContentStudio() {
   const [drafts, setDrafts] = useState<Content[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [detailTarget, setDetailTarget] = useState<{ content: Content; mode: "read" | "edit" } | null>(null);
+  const [imageGenerating, setImageGenerating] = useState(false);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState<string | null>(null);
   const stopStreamRef = useRef<(() => void) | null>(null);
+  const lastEventTypeRef = useRef<GenerationStreamEvent["type"] | null>(null);
 
   function refreshDrafts() {
-    listContent().then(setDrafts).catch(() => undefined);
+    return listContent().then(setDrafts).catch(() => undefined);
+  }
+
+  // The Content draft for a finished generation is created asynchronously
+  // (AI Generation -> RabbitMQ -> Content Service), not synchronously
+  // within the SSE stream, so it can lag a moment behind the "done" event.
+  // A single refreshDrafts() right when streaming ends can miss it —
+  // poll briefly instead of giving up after one check, otherwise the
+  // "Generate image for this post" button (which needs the draft's id)
+  // can simply never appear for that generation.
+  async function waitForDraft(jobId: string) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const all = await listContent().catch(() => []);
+      setDrafts(all);
+      if (all.some((d) => d.source_generation_job_id === jobId)) return;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
   }
 
   useEffect(() => {
@@ -52,6 +71,8 @@ export default function ContentStudio() {
     e.preventDefault();
     setError(null);
     setStreamedText("");
+    setGeneratedImageUrl(null);
+    lastEventTypeRef.current = null;
     setStreaming(true);
 
     try {
@@ -61,6 +82,7 @@ export default function ContentStudio() {
       stopStreamRef.current = streamGeneration(
         job_id,
         (event: GenerationStreamEvent) => {
+          lastEventTypeRef.current = event.type;
           if (event.type === "token") {
             setStreamedText((prev) => prev + event.content);
           } else if (event.type === "error") {
@@ -69,7 +91,11 @@ export default function ContentStudio() {
         },
         () => {
           setStreaming(false);
-          refreshDrafts();
+          if (lastEventTypeRef.current === "done") {
+            waitForDraft(job_id);
+          } else {
+            refreshDrafts();
+          }
         }
       );
     } catch (err) {
@@ -81,12 +107,16 @@ export default function ContentStudio() {
   async function handleGenerateImage(contentId: string) {
     if (!currentJobId) return;
     setError(null);
+    setImageGenerating(true);
     try {
       const { image_url } = await generateImage(currentJobId, prompt);
+      setGeneratedImageUrl(image_url);
       await updateContent(contentId, { image_url });
       refreshDrafts();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to generate image.");
+    } finally {
+      setImageGenerating(false);
     }
   }
 
@@ -168,14 +198,21 @@ export default function ContentStudio() {
       {(streaming || streamedText) && (
         <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-4">
           <p className="whitespace-pre-wrap text-sm">{streamedText}</p>
-          {!streaming && generatedContent && (
-            <div className="mt-4 flex gap-3">
-              <button
-                onClick={() => handleGenerateImage(generatedContent.id)}
-                className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800"
-              >
-                Generate image for this post
-              </button>
+          {!streaming && lastEventTypeRef.current === "done" && (
+            <div className="mt-4">
+              {generatedImageUrl ? (
+                <img src={generatedImageUrl} alt="" className="max-h-64 rounded-md" />
+              ) : generatedContent ? (
+                <button
+                  onClick={() => handleGenerateImage(generatedContent.id)}
+                  disabled={imageGenerating}
+                  className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {imageGenerating ? "Generating image..." : "Generate image for this post"}
+                </button>
+              ) : (
+                <p className="text-xs text-slate-500">Saving draft...</p>
+              )}
             </div>
           )}
         </div>

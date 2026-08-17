@@ -45,6 +45,17 @@ CONNECT_MAX_ATTEMPTS = 10
 CONNECT_INITIAL_DELAY_SECONDS = 1.0
 CONNECT_MAX_DELAY_SECONDS = 30.0
 
+# Retry backoff for failed message handlers (distinct from CONNECT_* above,
+# which only governs the initial broker connection). The spec calls out
+# LinkedIn publish failures specifically needing "retry with backoff" for
+# transient errors (rate limits, momentary 5xxs) — retrying immediately in
+# a tight loop just re-hits the same rate limit or outage. Backoff is
+# applied by delaying the requeue itself rather than blocking the consumer
+# task, so a slow retry on one message doesn't stall unrelated messages
+# behind it in the same queue.
+RETRY_BACKOFF_BASE_SECONDS = 2.0
+RETRY_BACKOFF_MAX_SECONDS = 60.0
+
 
 def _amqp_url() -> str:
     return os.environ.get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
@@ -204,12 +215,24 @@ async def consume(
                     await message.reject(requeue=False)
                     return
 
+                backoff_delay = min(
+                    RETRY_BACKOFF_BASE_SECONDS * (2 ** (retry_count - 1)),
+                    RETRY_BACKOFF_MAX_SECONDS,
+                )
                 logger.exception(
-                    "handler failed (attempt %d/%d), requeuing: %s",
+                    "handler failed (attempt %d/%d), requeuing in %.1fs: %s",
                     retry_count,
                     MAX_RETRIES,
+                    backoff_delay,
                     payload,
                 )
+                # No prefetch/QoS limit is configured on these channels, so
+                # aio_pika dispatches each incoming message to its own
+                # on_message task rather than serializing them — sleeping
+                # here only delays *this* message's retry and yields the
+                # event loop back to asyncio, it does not stall delivery or
+                # processing of any other in-flight message on the queue.
+                await asyncio.sleep(backoff_delay)
                 retry_message = Message(
                     body=message.body,
                     delivery_mode=DeliveryMode.PERSISTENT,

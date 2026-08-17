@@ -27,6 +27,7 @@ const ICON_PATHS: Record<string, string> = {
   credits: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m9-8a9 9 0 11-18 0 9 9 0 0118 0z",
   marketplace: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z",
   profile: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
+  scraper: "M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z",
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -47,6 +48,7 @@ function NavIcon({ name }: { name: string }) {
 const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { to: "/dashboard/content", label: "Content Studio", icon: "content" },
+  { to: "/dashboard/scraper", label: "Web Scraper", icon: "scraper" },
   { to: "/dashboard/calendar", label: "Calendar", icon: "calendar", requiresPaidPlan: true },
   { to: "/dashboard/linkedin", label: "LinkedIn", icon: "linkedin", requiresPaidPlan: true },
   { to: "/dashboard/team", label: "Team", icon: "team", ownerOnly: true, requiresTeamPlan: true },
@@ -58,12 +60,15 @@ const NAV_ITEMS: NavItem[] = [
 const OWNER_ROLES = new Set(["owner", "admin"]);
 const PAID_TIERS = new Set(["pro", "team"]);
 
+const PLAN_LABELS: Record<string, string> = { free: "Free", pro: "Pro", team: "Team" };
+
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { claims, logout } = useAuth();
-  const { planTier } = useAccount();
+  const { planTier, currentAccount } = useAccount();
   const isOwner = claims ? OWNER_ROLES.has(claims.role) : false;
   const hasPaidPlan = planTier !== null && PAID_TIERS.has(planTier);
   const hasTeamPlan = planTier === "team";
+  const planLabel = planTier ? PLAN_LABELS[planTier] ?? planTier : null;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
@@ -118,7 +123,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
         <div className="flex-1">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-6 py-4 backdrop-blur transition-colors duration-200 dark:border-slate-800 dark:bg-slate-950/80">
-            <span className="text-sm capitalize text-slate-500 dark:text-slate-400">Role: {claims?.role}</span>
+            <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+              <span className="capitalize">Role: {claims?.role}</span>
+              {planLabel && (
+                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                  {planLabel} plan
+                </span>
+              )}
+              {currentAccount?.type === "team" && (
+                <span>
+                  {currentAccount.member_count} member{currentAccount.member_count === 1 ? "" : "s"}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-3">
               <AccountSwitcher />
               <ThemeToggle />

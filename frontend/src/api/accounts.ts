@@ -6,6 +6,7 @@ export interface Account {
   name: string;
   plan_tier: string;
   role: string;
+  member_count: number;
 }
 
 export function listMyAccounts() {

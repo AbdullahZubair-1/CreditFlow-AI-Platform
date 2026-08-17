@@ -48,3 +48,16 @@ export function updateSubscription(plan: string) {
 export function listInvoices() {
   return apiFetch<Invoice[]>("/billing/invoices");
 }
+
+export interface Refund {
+  id: string;
+  amount_cents: number;
+  status: string;
+}
+
+export function createRefund(invoiceId: string, reason?: string) {
+  return apiFetch<Refund>("/billing/refunds", {
+    method: "POST",
+    body: { invoice_id: invoiceId, reason },
+  });
+}

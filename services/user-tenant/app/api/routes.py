@@ -49,9 +49,27 @@ async def list_my_accounts(
         .join(AccountMember, AccountMember.account_id == Account.id)
         .where(AccountMember.user_id == uuid.UUID(identity.user_id))
     )
+    accounts = rows.all()
+    if not accounts:
+        return []
+
+    count_rows = await session.execute(
+        select(AccountMember.account_id, func.count())
+        .where(AccountMember.account_id.in_([a.id for a, _ in accounts]))
+        .group_by(AccountMember.account_id)
+    )
+    counts = dict(count_rows.all())
+
     return [
-        AccountResponse(id=str(a.id), type=a.type, name=a.name, plan_tier=a.plan_tier, role=role)
-        for a, role in rows.all()
+        AccountResponse(
+            id=str(a.id),
+            type=a.type,
+            name=a.name,
+            plan_tier=a.plan_tier,
+            role=role,
+            member_count=counts.get(a.id, 1),
+        )
+        for a, role in accounts
     ]
 
 

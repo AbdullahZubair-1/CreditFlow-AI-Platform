@@ -292,10 +292,11 @@ async def dashboard_summary(request: Request, identity: Identity = Depends(requi
         except httpx.HTTPError:
             return None
 
-    accounts, balance, usage = await asyncio.gather(
+    accounts, balance, usage, subscription = await asyncio.gather(
         _get(f"{settings.user_tenant_service_url}/me/accounts"),
         _get(f"{settings.credits_service_url}/balance"),
         _get(f"{settings.usage_service_url}/summary"),
+        _get(f"{settings.billing_service_url}/subscription"),
     )
     account = next((a for a in (accounts or []) if a.get("id") == identity.account_id), None) if accounts else None
 
@@ -303,6 +304,7 @@ async def dashboard_summary(request: Request, identity: Identity = Depends(requi
         "account": account,
         "credits_balance": balance,
         "usage": usage,
+        "subscription": subscription,
     }
 
 

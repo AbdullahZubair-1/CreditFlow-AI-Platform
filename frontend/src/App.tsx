@@ -21,6 +21,7 @@ import LinkedInConnections from "./pages/LinkedInConnections";
 import Login from "./pages/Login";
 import MarketplacePage from "./pages/MarketplacePage";
 import ProfilePage from "./pages/ProfilePage";
+import ScraperJobs from "./pages/ScraperJobs";
 import SignUp from "./pages/SignUp";
 import TeamManagement from "./pages/TeamManagement";
 import VerifyEmail from "./pages/VerifyEmail";
@@ -72,6 +73,14 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <ProfilePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard/scraper"
+              element={
+                <ProtectedRoute>
+                  <ScraperJobs />
                 </ProtectedRoute>
               }
             />

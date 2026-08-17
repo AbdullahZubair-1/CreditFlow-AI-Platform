@@ -38,6 +38,19 @@ export function deleteContent(id: string) {
   return apiFetch<void>(`/content/${id}`, { method: "DELETE" });
 }
 
+export interface ContentVersion {
+  version_number: number;
+  title: string;
+  body: string;
+  image_url: string | null;
+  edited_by_user_id: string;
+  created_at: string;
+}
+
+export function listContentVersions(id: string) {
+  return apiFetch<ContentVersion[]>(`/content/${id}/versions`);
+}
+
 export async function uploadContentImage(id: string, file: File): Promise<{ image_url: string }> {
   // Multipart upload bypasses apiFetch's JSON body handling, but still
   // needs the same bearer token.

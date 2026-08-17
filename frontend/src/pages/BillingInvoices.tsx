@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 
 import {
   createCheckoutSession,
+  createRefund,
   listInvoices,
   listPlans,
   getSubscription,
@@ -13,6 +14,7 @@ import {
 } from "../api/billing";
 import { ApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 export default function BillingInvoices() {
   const [params] = useSearchParams();
@@ -21,6 +23,9 @@ export default function BillingInvoices() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
+  const [refundTarget, setRefundTarget] = useState<Invoice | null>(null);
+  const [refundedIds, setRefundedIds] = useState<Set<string>>(new Set());
+  const [refunding, setRefunding] = useState(false);
 
   function refresh() {
     getSubscription().then(setSubscription).catch(() => undefined);
@@ -48,6 +53,21 @@ export default function BillingInvoices() {
       setError(err instanceof ApiError ? err.message : "Failed to update plan.");
     } finally {
       setBusyPlan(null);
+    }
+  }
+
+  async function confirmRefund() {
+    if (!refundTarget) return;
+    setRefunding(true);
+    setError(null);
+    try {
+      await createRefund(refundTarget.id);
+      setRefundedIds((prev) => new Set(prev).add(refundTarget.id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to issue refund.");
+    } finally {
+      setRefunding(false);
+      setRefundTarget(null);
     }
   }
 
@@ -107,21 +127,39 @@ export default function BillingInvoices() {
               <th className="px-4 py-2">Date</th>
               <th className="px-4 py-2">Amount</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2"></th>
             </tr>
           </thead>
           <tbody>
-            {invoices.map((inv) => (
-              <tr key={inv.id} className="border-t border-slate-200 dark:border-slate-800">
-                <td className="px-4 py-2">{new Date(inv.created_at).toLocaleDateString()}</td>
-                <td className="px-4 py-2">
-                  {(inv.amount_cents / 100).toFixed(2)} {inv.currency.toUpperCase()}
-                </td>
-                <td className="px-4 py-2 capitalize">{inv.status}</td>
-              </tr>
-            ))}
+            {invoices.map((inv) => {
+              const refunded = refundedIds.has(inv.id);
+              return (
+                <tr key={inv.id} className="border-t border-slate-200 dark:border-slate-800">
+                  <td className="px-4 py-2">{new Date(inv.created_at).toLocaleDateString()}</td>
+                  <td className="px-4 py-2">
+                    {(inv.amount_cents / 100).toFixed(2)} {inv.currency.toUpperCase()}
+                  </td>
+                  <td className="px-4 py-2 capitalize">{inv.status}</td>
+                  <td className="px-4 py-2 text-right">
+                    {refunded ? (
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400">Refund issued</span>
+                    ) : (
+                      inv.status === "paid" && (
+                        <button
+                          onClick={() => setRefundTarget(inv)}
+                          className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                        >
+                          Request refund
+                        </button>
+                      )
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {invoices.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
                   No invoices yet.
                 </td>
               </tr>
@@ -129,6 +167,19 @@ export default function BillingInvoices() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={refundTarget !== null}
+        title="Request refund"
+        message={
+          refundTarget
+            ? `Refund ${(refundTarget.amount_cents / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()} for this invoice via Stripe? This can't be undone.`
+            : ""
+        }
+        confirmLabel={refunding ? "Refunding..." : "Refund invoice"}
+        onConfirm={confirmRefund}
+        onCancel={() => setRefundTarget(null)}
+      />
     </AppLayout>
   );
 }

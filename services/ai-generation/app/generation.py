@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from app import events, groq_client, pubsub
 from app.db import async_session_factory
+from app.groq_client import GroqError
 from app.models import GenerationJob, PromptHistory
 from app.text_cleanup import strip_markdown
 
@@ -65,6 +66,20 @@ async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, pr
             await session.commit()
 
         await pubsub.publish_chunk(str(job_id), {"type": "done", "total_tokens": total_tokens})
+
+        title = None
+        if purpose == "post":
+            # Only "post" generations become a Content draft (see
+            # Content's _handle_generation_completed), so this is skipped
+            # for other purposes to avoid spending an extra Groq call on
+            # something nothing will ever read.
+            try:
+                title = await groq_client.generate_short_title(response_text)
+            except GroqError:
+                logger.exception(
+                    "failed to generate title for job %s, Content will fall back to its own heuristic", job_id
+                )
+
         await events.publish_generation_completed(
             account_id,
             user_id,
@@ -76,6 +91,7 @@ async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, pr
             completion_tokens,
             total_tokens,
             cost_cents,
+            title,
         )
 
     except Exception as exc:  # noqa: BLE001

@@ -133,8 +133,14 @@ async def generate_image(
     if not job or job.account_id != uuid.UUID(identity.account_id):
         raise ApiError("not_found", "Generation job not found.", 404)
 
+    # Ground the image in the actual generated post text, not just the
+    # (often short, abstract) topic the user typed — a scene tied to a
+    # real detail from the post beats a generic "on-theme" stock image.
+    history = await session.scalar(select(PromptHistory).where(PromptHistory.generation_job_id == job_id))
+    source_text = history.response if history and history.response else body.prompt
+
     try:
-        image_prompt = await groq_client.generate_image_prompt(body.prompt)
+        image_prompt = await groq_client.generate_image_prompt(source_text)
     except GroqError:
         logger.exception("failed to expand image prompt, falling back to raw topic")
         image_prompt = body.prompt

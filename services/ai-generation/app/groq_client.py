@@ -32,40 +32,28 @@ SYSTEM_PROMPT = (
 )
 
 
-IMAGE_PROMPT_SYSTEM_PROMPT = (
-    "You turn a blog/social post topic into a short visual description for an AI "
-    "image generator. The topic is often abstract (e.g. 'why X is useful') and not "
-    "itself a scene — invent a concrete, specific scene that visually represents it. "
-    "Respond with ONLY the image description itself (10-25 words), no preamble, no "
-    "quotes, no explanation."
-)
-
-# Fast/cheap model for this — it's a short utility transformation, not the
-# user-facing generation itself, so there's no reason to spend the
-# "quality" model's tokens on it.
-IMAGE_PROMPT_MODEL = "llama-3.1-8b-instant"
+# Fast/cheap model for these — they're short utility transformations, not
+# the user-facing generation itself, so there's no reason to spend the
+# "quality" model's tokens on them.
+UTILITY_MODEL = "llama-3.1-8b-instant"
 
 
-async def generate_image_prompt(topic: str) -> str:
-    """Pollinations.ai (and text-to-image models generally) need a visual
-    scene description to produce something accurate — handing it the raw
-    post topic verbatim (e.g. "why vs code is useful") gives it nothing
-    concrete to draw, so it guesses at something loosely associated
-    instead of actually depicting the topic. This asks Groq to write that
-    scene description first, non-streaming since it's just one short
-    completion, not a live token-by-token experience."""
+async def _utility_completion(system_prompt: str, user_content: str, max_tokens: int) -> str:
+    """Shared non-streaming call for the small, single-shot utility
+    transformations below (title, image prompt) — neither needs live
+    token-by-token output, just one short completion."""
     url = f"{settings.groq_base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {settings.groq_api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": IMAGE_PROMPT_MODEL,
+        "model": UTILITY_MODEL,
         "messages": [
-            {"role": "system", "content": IMAGE_PROMPT_SYSTEM_PROMPT},
-            {"role": "user", "content": topic},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
         ],
-        "max_tokens": 60,
+        "max_tokens": max_tokens,
     }
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -73,8 +61,46 @@ async def generate_image_prompt(topic: str) -> str:
         if response.status_code != 200:
             raise GroqError(f"Groq returned {response.status_code}: {response.text}")
         data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        return content.strip('"') or topic
+        return data["choices"][0]["message"]["content"].strip().strip('"')
+
+
+IMAGE_PROMPT_SYSTEM_PROMPT = (
+    "You'll receive the full text of a social media post. Pick the single most "
+    "visually concrete example, moment, or detail actually mentioned in the text "
+    "(not the post's abstract overall theme) and describe it as a specific scene "
+    "for an AI image generator. Avoid generic tech cliches — no robots, no glowing "
+    "circuit boards, no people typing on laptops in dark rooms unless the text "
+    "literally describes that. Respond with ONLY the image description itself "
+    "(10-25 words), no preamble, no quotes, no explanation."
+)
+
+TITLE_SYSTEM_PROMPT = (
+    "You'll receive the full text of a social media post. Write a short, specific "
+    "title for it (4-8 words) that names its actual topic — not a generic label, "
+    "not a truncated first sentence. Respond with ONLY the title itself, no "
+    "quotes, no punctuation at the end, no Markdown."
+)
+
+
+async def generate_image_prompt(post_text: str) -> str:
+    """Pollinations.ai (and text-to-image models generally) need a visual
+    scene description to produce something accurate — handing it a loose
+    topic or the post's abstract theme produces something generically
+    "on-theme" but not actually tied to the post (e.g. a stock-photo-style
+    robot for anything AI-related). Grounding it in one concrete detail
+    from the actual generated text instead produces something that
+    genuinely reflects this specific post."""
+    result = await _utility_completion(IMAGE_PROMPT_SYSTEM_PROMPT, post_text, max_tokens=60)
+    return result or post_text
+
+
+async def generate_short_title(post_text: str) -> str:
+    """The post's first line isn't reliably a short topic — plenty of
+    generations open straight into a full sentence with no distinct title
+    line, which content._derive_title's old first-line heuristic would
+    just truncate mid-word. Asking for a real title directly is more
+    reliable than trying to reverse-engineer one from the body text."""
+    return await _utility_completion(TITLE_SYSTEM_PROMPT, post_text, max_tokens=20)
 
 
 async def stream_completion(model: str, prompt: str) -> AsyncIterator[dict[str, Any]]:

@@ -20,11 +20,11 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import ContentDetailModal from "../components/ContentDetailModal";
 import { useAuth } from "../context/AuthContext";
 
-const PUBLISH_ROLES = new Set(["owner", "admin"]);
+const APPROVE_ROLES = new Set(["owner", "admin"]);
 
 export default function ContentStudio() {
   const { claims } = useAuth();
-  const canPublish = claims ? PUBLISH_ROLES.has(claims.role) : false;
+  const canApprove = claims ? APPROVE_ROLES.has(claims.role) : false;
 
   const [models, setModels] = useState<Record<string, string>>({});
   const [prompt, setPrompt] = useState("");
@@ -120,11 +120,10 @@ export default function ContentStudio() {
     }
   }
 
-  async function handlePublishStep(content: Content) {
-    const next = content.status === "draft" ? "approved" : "published";
+  async function handleApprove(content: Content) {
     setError(null);
     try {
-      await updateContentStatus(content.id, next);
+      await updateContentStatus(content.id, "approved");
       refreshDrafts();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update status.");
@@ -246,13 +245,19 @@ export default function ContentStudio() {
                 >
                   Edit
                 </button>
-                {canPublish && content.status !== "published" && (
+                {canApprove && content.status === "draft" && (
                   <button
-                    onClick={() => handlePublishStep(content)}
+                    onClick={() => handleApprove(content)}
                     className="text-xs text-indigo-400 hover:underline"
                   >
-                    {content.status === "draft" ? "Approve" : "Publish"}
+                    Approve
                   </button>
+                )}
+                {content.status === "approved" && (
+                  <span className="text-xs text-slate-500">Approved — schedule it to publish</span>
+                )}
+                {content.status === "published" && (
+                  <span className="text-xs text-emerald-400">Published to LinkedIn</span>
                 )}
                 <button onClick={() => setDeleteTarget(content.id)} className="text-xs text-red-400 hover:underline">
                   Delete

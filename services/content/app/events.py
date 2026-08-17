@@ -14,9 +14,11 @@ logger = logging.getLogger("content.events")
 
 AI_EVENTS_EXCHANGE = "ai_events"
 SCRAPER_EVENTS_EXCHANGE = "scraper_events"
+SOCIAL_EVENTS_EXCHANGE = "social_events"
 DOMAIN_EVENTS_EXCHANGE = "domain_events"
 GENERATION_QUEUE = "content.ai_generation_completed"
 SCRAPE_QUEUE = "content.scrape_completed"
+SOCIAL_QUEUE = "content.post_published"
 
 _connection: aio_pika.abc.AbstractConnection | None = None
 _channel: aio_pika.abc.AbstractChannel | None = None
@@ -213,6 +215,36 @@ async def _handle_image_generated(payload: dict[str, Any]) -> None:
     await publish_content_updated(content)
 
 
+async def _handle_post_published(payload: dict[str, Any]) -> None:
+    """The manual 'Publish' action in Content Studio was removed because
+    it let a user mark content 'published' without anything actually
+    having been posted anywhere — a status that lied about reality. This
+    is the real trigger: once Social Publishing confirms a scheduled post
+    actually went live on LinkedIn, that's what should flip Content's
+    status to 'published', not a button click."""
+    data = payload["data"]
+    content_id_raw = data.get("content_id")
+    if not content_id_raw:
+        return  # older/malformed event with no content_id — nothing to update
+    content_id = uuid.UUID(content_id_raw)
+
+    async with async_session_factory() as session:
+        content = await session.get(Content, content_id)
+        if not content or content.status == "published":
+            return  # content since deleted, or already applied (redelivery)
+        if content.status != "approved":
+            logger.warning(
+                "post.published for content %s with unexpected status %s, applying anyway",
+                content_id,
+                content.status,
+            )
+
+        content.status = "published"
+        await session.commit()
+
+    await publish_content_updated(content)
+
+
 async def _route_ai_event(payload: dict[str, Any]) -> None:
     event_type = payload.get("event_type")
     if event_type == "ai.generation_completed":
@@ -237,3 +269,9 @@ async def start_consumer() -> None:
     )
     await consume(channel, scrape_queue, SCRAPER_EVENTS_EXCHANGE, _handle_scrape_completed, _is_processed, _mark_processed)
     logger.info("content consumer listening on %s", SCRAPE_QUEUE)
+
+    social_queue = await declare_durable_queue_with_dlx(
+        channel, SOCIAL_EVENTS_EXCHANGE, SOCIAL_QUEUE, routing_keys=["post.published"]
+    )
+    await consume(channel, social_queue, SOCIAL_EVENTS_EXCHANGE, _handle_post_published, _is_processed, _mark_processed)
+    logger.info("content consumer listening on %s", SOCIAL_QUEUE)

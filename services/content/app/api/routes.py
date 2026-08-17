@@ -24,7 +24,12 @@ router = APIRouter()
 
 ALLOWED_TRANSITIONS = {
     "draft": {"approved"},
-    "approved": {"published", "draft"},
+    # "published" is intentionally not a manually settable transition
+    # anymore — it's now applied automatically by events.py's
+    # post.published consumer, once Social Publishing confirms the
+    # content actually went live on LinkedIn. A human clicking a button
+    # shouldn't be able to mark something "published" that never was.
+    "approved": {"draft"},
     "published": {"draft"},
 }
 

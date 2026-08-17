@@ -104,7 +104,12 @@ async def invite_member(
 
     await events.publish_invite_created(str(invite.id), str(account_id), body.email, token, body.role)
 
-    return InviteResponse(invite_id=str(invite.id), dev_invite_token=token)
+    # token is deliberately NOT returned here — Notification actually
+    # emails the invite link now. Returning it in the API response would
+    # let the inviter (or anyone reading the response) hand out working
+    # invite links without the invitee's email ever being involved at
+    # all, defeating the point of inviting a specific person.
+    return InviteResponse(invite_id=str(invite.id))
 
 
 @router.post("/invites/{token}/accept", response_model=AcceptInviteResponse)

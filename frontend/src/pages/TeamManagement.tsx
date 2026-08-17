@@ -13,7 +13,7 @@ export default function TeamManagement() {
   const [members, setMembers] = useState<Member[]>([]);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
-  const [devInviteToken, setDevInviteToken] = useState<string | null>(null);
+  const [inviteSent, setInviteSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
@@ -28,9 +28,8 @@ export default function TeamManagement() {
     e.preventDefault();
     setError(null);
     try {
-      const res = await inviteMember(accountId, email, role);
-      // Dev-only: the Notification Service normally emails this link.
-      setDevInviteToken(res.dev_invite_token);
+      await inviteMember(accountId, email, role);
+      setInviteSent(email);
       setEmail("");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to send invite.");
@@ -86,11 +85,8 @@ export default function TeamManagement() {
         </button>
       </form>
 
-      {devInviteToken && (
-        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-          Dev-only: invite token (normally emailed) —{" "}
-          <span className="font-mono text-indigo-600 dark:text-indigo-400">{devInviteToken}</span>
-        </p>
+      {inviteSent && (
+        <p className="mt-3 text-sm text-emerald-600 dark:text-emerald-400">Invite sent to {inviteSent}.</p>
       )}
       {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 

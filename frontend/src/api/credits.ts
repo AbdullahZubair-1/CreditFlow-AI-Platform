@@ -3,6 +3,7 @@ import { apiFetch } from "./client";
 export interface Balance {
   account_id: string;
   balance: number;
+  sellable_balance: number;
 }
 
 export interface LedgerEntry {

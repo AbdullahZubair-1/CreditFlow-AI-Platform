@@ -10,18 +10,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import events, redis_client, security, user_tenant_client
 from app.config import settings
 from app.db import get_session
+from app.identity import Identity, require_identity
 from app.models import Credential, EmailVerificationToken, PasswordResetToken, RefreshToken, User
 from app.schemas import (
+    DeleteAccountRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
     LogoutRequest,
+    ProfileResponse,
     RefreshRequest,
     ResetPasswordRequest,
     SignupRequest,
     SignupResponse,
     SwitchAccountRequest,
     TokenPairResponse,
+    UpdateProfileRequest,
     VerifyEmailRequest,
 )
 from py_shared.errors import ApiError
@@ -237,6 +241,67 @@ async def switch_account(body: SwitchAccountRequest, session: AsyncSession = Dep
     await session.commit()
 
     return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.get("/profile", response_model=ProfileResponse)
+async def get_profile(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> ProfileResponse:
+    user = await session.get(User, uuid.UUID(identity.user_id))
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+    return ProfileResponse(user_id=str(user.id), email=user.email, name=user.name, email_verified=user.email_verified)
+
+
+@router.patch("/profile", response_model=ProfileResponse)
+async def update_profile(
+    body: UpdateProfileRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> ProfileResponse:
+    user = await session.get(User, uuid.UUID(identity.user_id))
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+
+    user.name = body.name.strip()
+    await session.commit()
+
+    return ProfileResponse(user_id=str(user.id), email=user.email, name=user.name, email_verified=user.email_verified)
+
+
+@router.delete("/account", status_code=204)
+async def delete_account(
+    body: DeleteAccountRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Real, irreversible self-service account deletion. Requires
+    re-entering the password as the actual safety gate (a frontend
+    type-to-confirm dialog is a UX speed bump, not a security control on
+    its own). Deletes the User row — Credential/RefreshToken/
+    EmailVerificationToken/PasswordResetToken all cascade via
+    ON DELETE CASCADE — then publishes user.deleted so User/Tenant can
+    remove this user's memberships across every account, and revokes
+    every active session via Redis so any already-issued access token
+    stops working immediately rather than lingering until it expires."""
+    user_id = uuid.UUID(identity.user_id)
+    user = await session.get(User, user_id)
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+
+    credential = await session.scalar(select(Credential).where(Credential.user_id == user_id))
+    if not credential or not security.verify_password(body.password, credential.password_hash):
+        raise ApiError("invalid_credentials", "Incorrect password.", 401)
+
+    active_jtis = await redis_client.list_active_jtis_for_user(str(user_id))
+
+    await session.delete(user)
+    await session.commit()
+
+    for jti in active_jtis:
+        await redis_client.revoke_jti(jti)
+
+    await events.publish_user_deleted(str(user_id))
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)

@@ -60,7 +60,7 @@ export default function AdminConsole() {
       <h1 className="text-2xl font-semibold">
         SuperAdmin Console
       </h1>
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
@@ -69,7 +69,7 @@ export default function AdminConsole() {
             placeholder="Search accounts..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="mt-2 w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+            className="mt-2 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
           />
           <div className="mt-3 max-h-96 space-y-1 overflow-y-auto">
             {filteredAccounts.map((a) => (
@@ -79,7 +79,7 @@ export default function AdminConsole() {
                 className={`block w-full rounded-md px-3 py-2 text-left text-sm ${
                   selectedAccountId === a.account_id
                     ? "bg-indigo-500/20 text-indigo-300"
-                    : "text-slate-300 hover:bg-slate-900"
+                    : "text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900"
                 }`}
               >
                 <span className="font-medium">{a.name}</span>
@@ -115,14 +115,14 @@ export default function AdminConsole() {
               <h2 className="mt-8 text-lg font-semibold">Active sessions</h2>
               <div className="mt-3 space-y-2">
                 {sessions.map((s) => (
-                  <div key={s.jti} className="flex items-center justify-between rounded-md border border-slate-800 p-3">
+                  <div key={s.jti} className="flex items-center justify-between rounded-md border border-slate-200 dark:border-slate-800 p-3">
                     <div>
                       <p className="font-mono text-xs">{s.jti}</p>
                       <p className="text-xs text-slate-500">
                         user {s.user_id} · expires in {Math.round(s.expires_in_seconds / 60)}m
                       </p>
                     </div>
-                    <button onClick={() => setRevokeTarget(s.jti)} className="text-xs text-red-400 hover:underline">
+                    <button onClick={() => setRevokeTarget(s.jti)} className="text-xs text-red-600 dark:text-red-400 hover:underline">
                       Revoke
                     </button>
                   </div>
@@ -135,9 +135,9 @@ export default function AdminConsole() {
           <h2 className="mt-8 text-lg font-semibold">
             {selectedAccountId ? "Account audit log" : "Platform-wide audit log"}
           </h2>
-          <div className="mt-3 max-h-96 overflow-y-auto rounded-lg border border-slate-800">
+          <div className="mt-3 max-h-96 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-900 text-left text-slate-400">
+              <thead className="sticky top-0 bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2">Time</th>
                   <th className="px-3 py-2">Event</th>
@@ -146,8 +146,8 @@ export default function AdminConsole() {
               </thead>
               <tbody>
                 {auditLog.map((entry) => (
-                  <tr key={entry.id} className="border-t border-slate-800">
-                    <td className="px-3 py-2 text-xs text-slate-400">
+                  <tr key={entry.id} className="border-t border-slate-200 dark:border-slate-800">
+                    <td className="px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
                       {new Date(entry.occurred_at).toLocaleString()}
                     </td>
                     <td className="px-3 py-2 text-xs">{entry.event_type}</td>

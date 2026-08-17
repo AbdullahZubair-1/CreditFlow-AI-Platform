@@ -33,6 +33,26 @@ async def revoke_jti(jti: str) -> None:
     await get_client().delete(f"jti:{jti}")
 
 
+async def list_active_jtis_for_user(user_id: str) -> list[str]:
+    """Same SCAN-jti:*-and-filter approach Admin's session viewer already
+    uses — used here so DELETE /account can revoke every one of a user's
+    active sessions immediately, not just the one they happened to be
+    deleting the account from."""
+    client = get_client()
+    jtis: list[str] = []
+    async for key in client.scan_iter(match="jti:*"):
+        raw = await client.get(key)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if data.get("user_id") == user_id:
+            jtis.append(key.removeprefix("jti:"))
+    return jtis
+
+
 async def check_login_rate_limit(email: str, ip: str) -> bool:
     """Returns True if the attempt is allowed, False if rate-limited."""
     client = get_client()

@@ -19,7 +19,7 @@ export default function CalendarScheduler() {
   const [schedulableContent, setSchedulableContent] = useState<Content[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedContentId, setSelectedContentId] = useState("");
-  const [recurrence, setRecurrence] = useState("none");
+  const [scheduleTime, setScheduleTime] = useState("09:00");
   const [error, setError] = useState<string | null>(null);
   const [cancelTarget, setCancelTarget] = useState<string | null>(null);
 
@@ -61,12 +61,13 @@ export default function CalendarScheduler() {
     if (!selectedDate || !selectedContentId) return;
     setError(null);
     try {
+      const [hours, minutes] = scheduleTime.split(":").map(Number);
       const publishAt = new Date(selectedDate);
-      publishAt.setHours(9, 0, 0, 0);
-      await createSchedule(selectedContentId, publishAt, recurrence);
+      publishAt.setHours(hours || 0, minutes || 0, 0, 0);
+      await createSchedule(selectedContentId, publishAt, "none");
       setSelectedDate(null);
       setSelectedContentId("");
-      setRecurrence("none");
+      setScheduleTime("09:00");
       refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to schedule content.");
@@ -100,37 +101,37 @@ export default function CalendarScheduler() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Calendar</h1>
         <div className="flex items-center gap-3">
-          <div className="flex rounded-md border border-slate-700 text-sm">
+          <div className="flex rounded-md border border-slate-300 dark:border-slate-700 text-sm">
             <button
               onClick={() => setViewMode("month")}
-              className={`px-3 py-1.5 ${viewMode === "month" ? "bg-indigo-500 text-white" : "hover:bg-slate-800"}`}
+              className={`px-3 py-1.5 ${viewMode === "month" ? "bg-indigo-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
             >
               Month
             </button>
             <button
               onClick={() => setViewMode("week")}
-              className={`px-3 py-1.5 ${viewMode === "week" ? "bg-indigo-500 text-white" : "hover:bg-slate-800"}`}
+              className={`px-3 py-1.5 ${viewMode === "week" ? "bg-indigo-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
             >
               Week
             </button>
           </div>
-          <button onClick={goPrev} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
+          <button onClick={goPrev} className="rounded-md border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">
             Prev
           </button>
-          <span className="text-sm text-slate-300">
+          <span className="text-sm text-slate-600 dark:text-slate-300">
             {viewMode === "month"
               ? monthStart.toLocaleString(undefined, { month: "long", year: "numeric" })
               : `${weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${endOfWeek(
                   weekStart
                 ).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
           </span>
-          <button onClick={goNext} className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800">
+          <button onClick={goNext} className="rounded-md border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800">
             Next
           </button>
         </div>
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="mt-6 grid grid-cols-7 gap-1 text-xs text-slate-500">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
@@ -148,7 +149,7 @@ export default function CalendarScheduler() {
               key={day.toISOString()}
               onClick={() => setSelectedDate(day)}
               className={`min-h-24 rounded-md border p-2 text-left align-top ${
-                inMonth ? "border-slate-800 bg-slate-900" : "border-slate-900 bg-slate-950 text-slate-600"
+                inMonth ? "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" : "border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-950 text-slate-600"
               } hover:border-indigo-500`}
             >
               <span className="text-xs">{day.getDate()}</span>
@@ -160,7 +161,7 @@ export default function CalendarScheduler() {
                       p.status === "fired"
                         ? "bg-emerald-500/20 text-emerald-300"
                         : p.status === "cancelled"
-                        ? "bg-slate-700 text-slate-400 line-through"
+                        ? "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 line-through"
                         : "bg-indigo-500/20 text-indigo-300"
                     }`}
                   >
@@ -175,14 +176,14 @@ export default function CalendarScheduler() {
       </div>
 
       {selectedDate && (
-        <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
+        <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
           <h2 className="text-lg font-semibold">Schedule content for {selectedDate.toLocaleDateString()}</h2>
 
           <div className="mt-3 space-y-2">
             {scheduled
               .filter((p) => sameDay(new Date(p.publish_at), selectedDate))
               .map((p) => (
-                <div key={p.id} className="flex items-center justify-between rounded-md border border-slate-800 p-3">
+                <div key={p.id} className="flex items-center justify-between rounded-md border border-slate-200 dark:border-slate-800 p-3">
                   <div>
                     <p className="text-sm">Scheduled at {new Date(p.publish_at).toLocaleTimeString()}</p>
                     <p className="text-xs text-slate-500">status: {p.status}</p>
@@ -198,11 +199,11 @@ export default function CalendarScheduler() {
                           newDate.setHours(h || 0, m || 0);
                           handleReschedule(p, newDate);
                         }}
-                        className="text-xs text-indigo-400 hover:underline"
+                        className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
                       >
                         Reschedule
                       </button>
-                      <button onClick={() => setCancelTarget(p.id)} className="text-xs text-red-400 hover:underline">
+                      <button onClick={() => setCancelTarget(p.id)} className="text-xs text-red-600 dark:text-red-400 hover:underline">
                         Cancel
                       </button>
                     </div>
@@ -217,7 +218,7 @@ export default function CalendarScheduler() {
                 required
                 value={selectedContentId}
                 onChange={(e) => setSelectedContentId(e.target.value)}
-                className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+                className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
               >
                 <option value="">Choose content...</option>
                 {schedulableContent.map((c) => (
@@ -232,18 +233,15 @@ export default function CalendarScheduler() {
                 </p>
               )}
             </div>
-            <select
-              value={recurrence}
-              onChange={(e) => setRecurrence(e.target.value)}
-              className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
-            >
-              <option value="none">One-off</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
+            <input
+              type="time"
+              required
+              value={scheduleTime}
+              onChange={(e) => setScheduleTime(e.target.value)}
+              className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
+            />
             <button className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400">
-              Schedule (9am)
+              Schedule
             </button>
           </form>
         </div>

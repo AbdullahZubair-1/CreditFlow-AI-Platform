@@ -58,3 +58,21 @@ class ResetPasswordRequest(BaseModel):
     email: EmailStr
     otp: str
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class ProfileResponse(BaseModel):
+    user_id: str
+    email: EmailStr
+    name: str | None
+    email_verified: bool
+
+
+class UpdateProfileRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class DeleteAccountRequest(BaseModel):
+    # Re-entering the password is the actual safety gate for this
+    # destructive, irreversible action — the frontend's type-to-confirm
+    # dialog is a UX speed bump, not a security control on its own.
+    password: str

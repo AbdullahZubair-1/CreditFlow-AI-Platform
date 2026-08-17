@@ -5,7 +5,7 @@ import stripe
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
 
-from app import cookie_auth, redis_client, sse, webhooks
+from app import cookie_auth, plan_access, redis_client, sse, webhooks
 from app.config import settings
 from app.identity import Identity, require_jwt, require_jwt_from_header_or_query
 from app.proxy import forward, get_client
@@ -125,6 +125,16 @@ async def auth_logout(request: Request) -> Response:
     return response
 
 
+@router.api_route("/auth/profile", methods=["GET", "PATCH"])
+async def proxy_auth_profile(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.auth_service_url, "profile", request, identity)
+
+
+@router.delete("/auth/account")
+async def proxy_auth_delete_account(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    return await _proxy_protected(settings.auth_service_url, "account", request, identity)
+
+
 @router.api_route("/auth/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_auth(path: str, request: Request) -> Response:
     _reject_internal_paths(path)
@@ -162,6 +172,8 @@ async def proxy_billing(path: str, request: Request, identity: Identity = Depend
 @router.api_route("/credits/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_credits(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
     _require_owner_tier(identity)
+    if path.startswith("marketplace"):
+        await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.credits_service_url, path, request, identity)
 
 
@@ -197,11 +209,13 @@ async def proxy_content(path: str, request: Request, identity: Identity = Depend
 
 @router.api_route("/scheduled", methods=["GET", "POST"])
 async def proxy_scheduled_root(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.scheduler_service_url, "scheduled", request, identity)
 
 
 @router.api_route("/scheduled/{path:path}", methods=["GET", "PATCH", "DELETE"])
 async def proxy_scheduled(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.scheduler_service_url, f"scheduled/{path}", request, identity)
 
 
@@ -218,16 +232,19 @@ async def proxy_linkedin_callback(request: Request) -> Response:
 
 @router.post("/social/linkedin/connect")
 async def proxy_linkedin_connect(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.social_publishing_service_url, "social/linkedin/connect", request, identity)
 
 
 @router.api_route("/social/connections", methods=["GET", "DELETE"])
 async def proxy_social_connections(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.social_publishing_service_url, "social/connections", request, identity)
 
 
 @router.get("/social/publish-jobs")
 async def proxy_publish_jobs(request: Request, identity: Identity = Depends(require_jwt)) -> Response:
+    await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.social_publishing_service_url, "social/publish-jobs", request, identity)
 
 

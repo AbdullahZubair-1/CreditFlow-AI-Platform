@@ -29,7 +29,7 @@ export default function AcceptInvite() {
   if (!isAuthenticated) {
     return (
       <AuthLayout title="Accept invite">
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-slate-500 dark:text-slate-400">
           Log in or sign up first, then come back to this link to join the team.
         </p>
         <button
@@ -44,8 +44,8 @@ export default function AcceptInvite() {
 
   return (
     <AuthLayout title="Accept invite">
-      <p className="text-sm text-slate-400">You've been invited to join a CreditFlow team.</p>
-      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      <p className="text-sm text-slate-500 dark:text-slate-400">You've been invited to join a CreditFlow team.</p>
+      {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
       <button
         onClick={handleAccept}
         disabled={status === "accepting"}

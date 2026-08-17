@@ -56,14 +56,14 @@ export default function BillingInvoices() {
       <h1 className="text-2xl font-semibold">Billing &amp; Invoices</h1>
 
       {params.get("checkout") === "success" && (
-        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-400">
+        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400">
           Checkout complete — your plan will update once Stripe confirms the payment.
         </p>
       )}
       {params.get("checkout") === "cancelled" && (
-        <p className="mt-4 rounded-md bg-slate-800 px-4 py-2 text-sm text-slate-400">Checkout was cancelled.</p>
+        <p className="mt-4 rounded-md bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm text-slate-500 dark:text-slate-400">Checkout was cancelled.</p>
       )}
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {plans.map((plan) => {
@@ -72,18 +72,18 @@ export default function BillingInvoices() {
             <div
               key={plan.tier}
               className={`rounded-lg border p-5 ${
-                isCurrent ? "border-indigo-500 bg-indigo-500/10" : "border-slate-800 bg-slate-900"
+                isCurrent ? "border-indigo-500 bg-indigo-500/10" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
               }`}
             >
               <h3 className="text-lg font-semibold capitalize">{plan.tier}</h3>
               <p className="mt-1 text-2xl font-semibold">
                 ${(plan.display_price_cents / 100).toFixed(0)}
-                <span className="text-sm text-slate-400">/mo</span>
+                <span className="text-sm text-slate-500 dark:text-slate-400">/mo</span>
               </p>
               <button
                 disabled={isCurrent || busyPlan === plan.tier || plan.tier === "free"}
                 onClick={() => handleSelectPlan(plan.tier)}
-                className="mt-4 w-full rounded-md border border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+                className="mt-4 w-full rounded-md border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
               >
                 {isCurrent ? "Current plan" : busyPlan === plan.tier ? "Updating..." : "Choose plan"}
               </button>
@@ -93,16 +93,16 @@ export default function BillingInvoices() {
       </div>
 
       {subscription?.grace_period_ends_at && (
-        <p className="mt-4 rounded-md bg-amber-500/10 px-4 py-2 text-sm text-amber-400">
+        <p className="mt-4 rounded-md bg-amber-500/10 px-4 py-2 text-sm text-amber-600 dark:text-amber-400">
           A recent payment failed — please update your payment method before{" "}
           {new Date(subscription.grace_period_ends_at).toLocaleDateString()} to avoid a downgrade.
         </p>
       )}
 
       <h2 className="mt-10 text-lg font-semibold">Invoice history</h2>
-      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-left text-slate-400">
+          <thead className="bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
             <tr>
               <th className="px-4 py-2">Date</th>
               <th className="px-4 py-2">Amount</th>
@@ -111,7 +111,7 @@ export default function BillingInvoices() {
           </thead>
           <tbody>
             {invoices.map((inv) => (
-              <tr key={inv.id} className="border-t border-slate-800">
+              <tr key={inv.id} className="border-t border-slate-200 dark:border-slate-800">
                 <td className="px-4 py-2">{new Date(inv.created_at).toLocaleDateString()}</td>
                 <td className="px-4 py-2">
                   {(inv.amount_cents / 100).toFixed(2)} {inv.currency.toUpperCase()}

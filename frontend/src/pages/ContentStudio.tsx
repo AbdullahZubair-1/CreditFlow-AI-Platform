@@ -162,13 +162,13 @@ export default function ContentStudio() {
           placeholder="What should the AI write about?"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
         />
         <div className="flex items-center gap-3">
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+            className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
           >
             {Object.keys(models).length > 0 ? (
               Object.keys(models).map((key) => (
@@ -192,10 +192,10 @@ export default function ContentStudio() {
         </div>
       </form>
 
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       {(streaming || streamedText) && (
-        <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-4">
+        <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
           <p className="whitespace-pre-wrap text-sm">{streamedText}</p>
           {!streaming && lastEventTypeRef.current === "done" && (
             <div className="mt-4">
@@ -205,7 +205,7 @@ export default function ContentStudio() {
                 <button
                   onClick={() => handleGenerateImage(generatedContent.id)}
                   disabled={imageGenerating}
-                  className="rounded-md border border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-800 disabled:opacity-50"
+                  className="rounded-md border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-sm hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
                 >
                   {imageGenerating ? "Generating image..." : "Generate image for this post"}
                 </button>
@@ -220,35 +220,35 @@ export default function ContentStudio() {
       <h2 className="mt-10 text-lg font-semibold">Drafts</h2>
       <div className="mt-3 space-y-3">
         {drafts.map((content) => (
-          <div key={content.id} className="rounded-lg border border-slate-800 p-4">
+          <div key={content.id} className="rounded-lg border border-slate-200 dark:border-slate-800 p-4">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="font-medium">{content.title}</p>
-                <p className="mt-1 text-sm text-slate-400">{content.body.slice(0, 200)}</p>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{content.body.slice(0, 200)}</p>
                 {content.image_url && (
                   <img src={content.image_url} alt="" className="mt-2 max-h-40 rounded-md" />
                 )}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-2">
-                <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs capitalize text-slate-300">
+                <span className="rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-xs capitalize text-slate-600 dark:text-slate-300">
                   {content.status}
                 </span>
                 <button
                   onClick={() => setDetailTarget({ content, mode: "read" })}
-                  className="text-xs text-slate-300 hover:underline"
+                  className="text-xs text-slate-600 dark:text-slate-300 hover:underline"
                 >
                   Read
                 </button>
                 <button
                   onClick={() => setDetailTarget({ content, mode: "edit" })}
-                  className="text-xs text-indigo-400 hover:underline"
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
                 >
                   Edit
                 </button>
                 {canApprove && content.status === "draft" && (
                   <button
                     onClick={() => handleApprove(content)}
-                    className="text-xs text-indigo-400 hover:underline"
+                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
                   >
                     Approve
                   </button>
@@ -257,9 +257,9 @@ export default function ContentStudio() {
                   <span className="text-xs text-slate-500">Approved — schedule it to publish</span>
                 )}
                 {content.status === "published" && (
-                  <span className="text-xs text-emerald-400">Published to LinkedIn</span>
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400">Published to LinkedIn</span>
                 )}
-                <button onClick={() => setDeleteTarget(content.id)} className="text-xs text-red-400 hover:underline">
+                <button onClick={() => setDeleteTarget(content.id)} className="text-xs text-red-600 dark:text-red-400 hover:underline">
                   Delete
                 </button>
               </div>

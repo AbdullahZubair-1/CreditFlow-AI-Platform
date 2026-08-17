@@ -101,6 +101,22 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
         await session.commit()
 
 
+def _plan_tier_from_invoice_lines(invoice_obj: dict[str, Any]) -> str | None:
+    """Reads the plan directly off the invoice's own line items (each
+    carries the Stripe Price actually billed) instead of trusting the
+    Subscription row's cached plan_tier — Stripe doesn't guarantee that
+    customer.subscription.created/updated (which is what sets that cache,
+    see _apply_subscription_updated) arrives before invoice.paid for the
+    same checkout. Reading it wrong here silently granted zero credits
+    for a real, paid Pro/Team invoice whenever the subscription event
+    happened to process second."""
+    lines = invoice_obj.get("lines", {}).get("data", [])
+    if not lines:
+        return None
+    price = lines[0].get("price") or lines[0].get("plan") or {}
+    return PRICE_ID_TO_PLAN.get(price.get("id"))
+
+
 async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
     account_id = await _account_id_for_customer(session, invoice_obj["customer"])
     if account_id is None:
@@ -127,6 +143,12 @@ async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
         subscription.status = "active"
         subscription.grace_period_ends_at = None
 
+    # Prefer the plan read directly off this invoice's own line items;
+    # only fall back to the (possibly not-yet-updated) Subscription row's
+    # cached plan_tier if the invoice itself doesn't carry a recognized
+    # Stripe Price (e.g. some non-subscription invoice types).
+    plan_tier = _plan_tier_from_invoice_lines(invoice_obj) or (subscription.plan_tier if subscription else "free")
+
     add_outbox_event(
         session,
         "invoice.paid",
@@ -134,10 +156,8 @@ async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
             "account_id": str(account_id),
             "invoice_id": invoice_obj["id"],
             "amount_cents": invoice_obj["amount_paid"],
-            # the Credits Service maps plan_tier -> credits granted; falls
-            # back to "free" (0 credits) if the subscription row is somehow
-            # missing, rather than failing the whole handler.
-            "plan_tier": subscription.plan_tier if subscription else "free",
+            # the Credits Service maps plan_tier -> credits granted
+            "plan_tier": plan_tier,
         },
     )
 

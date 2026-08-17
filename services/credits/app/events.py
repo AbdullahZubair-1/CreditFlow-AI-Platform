@@ -6,7 +6,7 @@ from typing import Any
 import aio_pika
 from sqlalchemy import select
 
-from app.config import PLAN_CREDIT_GRANTS, settings
+from app.config import FREE_SIGNUP_BONUS_CREDITS, PLAN_CREDIT_GRANTS, settings
 from app.db import async_session_factory
 from app.ledger import append_entry, get_balance
 from app.models import CreditsLedger, MarketplaceListing, ProcessedEvent
@@ -266,6 +266,36 @@ async def _route_ai_event(payload: dict[str, Any]) -> None:
         await _handle_generation_completed(payload)
 
 
+async def _handle_account_created(payload: dict[str, Any]) -> None:
+    """Every account starts on the free plan, which has no paid invoice to
+    trigger PLAN_CREDIT_GRANTS — this is the one-time signup bonus instead.
+    reference_id=account_id makes this idempotent per account (an account
+    is only ever created once, but redelivery of this exact event must
+    not double-grant)."""
+    data = payload["data"]
+    account_id = uuid.UUID(data["account_id"])
+
+    async with async_session_factory() as session:
+        already_granted = await session.scalar(
+            select(CreditsLedger).where(
+                CreditsLedger.reference_id == str(account_id), CreditsLedger.reason == "free_signup_bonus"
+            )
+        )
+        if already_granted:
+            return
+
+        entry = await append_entry(
+            session, account_id, FREE_SIGNUP_BONUS_CREDITS, "free_signup_bonus", str(account_id)
+        )
+        await session.commit()
+
+    await _publish(
+        "credits.credited",
+        {"account_id": str(account_id), "amount": FREE_SIGNUP_BONUS_CREDITS, "reason": "free_signup_bonus"},
+    )
+    await _maybe_emit_low_balance(account_id, entry.balance_after)
+
+
 async def start_consumer() -> None:
     channel = await get_channel()
     queue = await declare_durable_queue_with_dlx(
@@ -285,3 +315,9 @@ async def start_consumer() -> None:
     )
     await consume(channel, ai_queue, AI_EVENTS_EXCHANGE, _route_ai_event, _is_processed, _mark_processed)
     logger.info("credits consumer listening on %s", AI_QUEUE_NAME)
+
+    domain_queue = await declare_durable_queue_with_dlx(
+        channel, DOMAIN_EVENTS_EXCHANGE, "credits.domain_events", routing_keys=["account.created"]
+    )
+    await consume(channel, domain_queue, DOMAIN_EVENTS_EXCHANGE, _handle_account_created, _is_processed, _mark_processed)
+    logger.info("credits consumer listening on credits.domain_events")

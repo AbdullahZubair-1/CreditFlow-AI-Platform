@@ -63,38 +63,38 @@ export default function CreditsPage() {
       <h1 className="text-2xl font-semibold">Credits</h1>
 
       {params.get("purchase") === "success" && (
-        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-400">
+        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400">
           Purchase complete — credits will settle once Stripe confirms the payment.
         </p>
       )}
-      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
-        <p className="text-sm text-slate-400">Current balance</p>
+      <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+        <p className="text-sm text-slate-500 dark:text-slate-400">Current balance</p>
         <p className="mt-1 text-3xl font-semibold">{balance ? balance.balance.toLocaleString() : "—"} credits</p>
       </div>
 
       <h2 className="mt-10 text-lg font-semibold">Buy credits from us</h2>
-      <p className="mt-1 text-sm text-slate-400">
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
         Every paid plan includes a monthly credit grant. Need more than your plan gives you? Buy extra credits
         directly below.
       </p>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         {paidPlans.map((plan) => (
-          <div key={plan.tier} className="rounded-lg border border-slate-800 p-5">
-            <p className="text-sm font-medium capitalize text-slate-300">{plan.tier} plan</p>
+          <div key={plan.tier} className="rounded-lg border border-slate-200 dark:border-slate-800 p-5">
+            <p className="text-sm font-medium capitalize text-slate-600 dark:text-slate-300">{plan.tier} plan</p>
             <p className="mt-2 text-2xl font-semibold">
-              {(planGrants[plan.tier] ?? 0).toLocaleString()} <span className="text-sm font-normal text-slate-400">credits/mo</span>
+              {(planGrants[plan.tier] ?? 0).toLocaleString()} <span className="text-sm font-normal text-slate-500 dark:text-slate-400">credits/mo</span>
             </p>
-            <p className="mt-1 text-sm text-slate-400">${(plan.display_price_cents / 100).toFixed(2)}/mo subscription</p>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">${(plan.display_price_cents / 100).toFixed(2)}/mo subscription</p>
           </div>
         ))}
       </div>
 
-      <div className="mt-6 rounded-lg border border-slate-800 bg-slate-900 p-5">
-        <p className="text-sm font-medium text-slate-300">Need more credits right now?</p>
-        <p className="mt-1 text-sm text-slate-400">
+      <div className="mt-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Need more credits right now?</p>
+        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Buy extra credits any time, on top of whatever your plan already grants
           {centsPerCredit ? ` — $${(centsPerCredit / 100).toFixed(2)} per credit` : ""}.
         </p>
@@ -107,7 +107,7 @@ export default function CreditsPage() {
               placeholder="Credits amount"
               value={purchaseAmount}
               onChange={(e) => setPurchaseAmount(e.target.value)}
-              className="w-40 rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+              className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
             />
             {purchasePriceUsd && <p className="mt-1 text-xs text-slate-500">Total: ${purchasePriceUsd}</p>}
           </div>
@@ -121,9 +121,9 @@ export default function CreditsPage() {
       </div>
 
       <h2 className="mt-10 text-lg font-semibold">Transaction history</h2>
-      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-800">
+      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-left text-slate-400">
+          <thead className="bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
             <tr>
               <th className="px-4 py-2">Date</th>
               <th className="px-4 py-2">Reason</th>
@@ -133,10 +133,10 @@ export default function CreditsPage() {
           </thead>
           <tbody>
             {transactions.map((t) => (
-              <tr key={t.id} className="border-t border-slate-800">
+              <tr key={t.id} className="border-t border-slate-200 dark:border-slate-800">
                 <td className="px-4 py-2">{new Date(t.created_at).toLocaleDateString()}</td>
                 <td className="px-4 py-2 capitalize">{t.reason.replace(/_/g, " ")}</td>
-                <td className={`px-4 py-2 ${t.delta >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                <td className={`px-4 py-2 ${t.delta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                   {t.delta >= 0 ? "+" : ""}
                   {t.delta.toLocaleString()}
                 </td>

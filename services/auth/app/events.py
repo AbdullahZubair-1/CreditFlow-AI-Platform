@@ -49,6 +49,16 @@ async def publish_user_logged_in(user_id: str) -> None:
     }))
 
 
+async def publish_user_deleted(user_id: str) -> None:
+    """User-Tenant consumes this to remove the user's AccountMember rows
+    across every account they belonged to — Auth owns identity, but
+    membership lives in a different service/schema entirely, so deleting
+    the User row here doesn't (and can't, via any FK) clean that up on
+    its own."""
+    channel = await get_channel()
+    await publish_event(channel, EXCHANGE, "user.deleted", _envelope("user.deleted", {"user_id": user_id}))
+
+
 async def publish_password_reset_requested(user_id: str, email: str, otp: str) -> None:
     channel = await get_channel()
     await publish_event(

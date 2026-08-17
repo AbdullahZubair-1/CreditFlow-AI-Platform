@@ -87,6 +87,10 @@ async def invite_member(
     if member.role not in MANAGE_ROLES:
         raise ApiError("forbidden", "Only owners/admins can invite members.", 403)
 
+    account = await session.get(Account, account_id)
+    if not account or account.plan_tier != "team":
+        raise ApiError("team_plan_required", "Inviting team members requires the Team plan.", 403)
+
     token = uuid.uuid4().hex
     invite = Invite(
         account_id=account_id,

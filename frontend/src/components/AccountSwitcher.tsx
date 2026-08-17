@@ -1,18 +1,12 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { listMyAccounts, type Account } from "../api/accounts";
+import { useAccount } from "../context/AccountContext";
 import { useAuth } from "../context/AuthContext";
 
 export default function AccountSwitcher() {
   const { claims, switchAccount } = useAuth();
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const { accounts } = useAccount();
   const [switching, setSwitching] = useState(false);
-
-  useEffect(() => {
-    listMyAccounts()
-      .then(setAccounts)
-      .catch(() => undefined);
-  }, [claims?.account_id]);
 
   if (accounts.length === 0) return null;
 
@@ -34,7 +28,7 @@ export default function AccountSwitcher() {
       value={claims?.account_id ?? ""}
       onChange={handleChange}
       disabled={switching}
-      className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm outline-none disabled:opacity-50"
+      className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-sm outline-none disabled:opacity-50"
     >
       {accounts.map((a) => (
         <option key={a.id} value={a.id}>

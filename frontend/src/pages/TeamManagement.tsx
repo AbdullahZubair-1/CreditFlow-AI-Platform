@@ -71,12 +71,12 @@ export default function TeamManagement() {
           placeholder="teammate@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
         />
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
-          className="rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none"
+          className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
         >
           <option value="member">Member</option>
           <option value="admin">Admin</option>
@@ -87,16 +87,16 @@ export default function TeamManagement() {
       </form>
 
       {devInviteToken && (
-        <p className="mt-3 text-sm text-slate-400">
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
           Dev-only: invite token (normally emailed) —{" "}
-          <span className="font-mono text-indigo-400">{devInviteToken}</span>
+          <span className="font-mono text-indigo-600 dark:text-indigo-400">{devInviteToken}</span>
         </p>
       )}
-      {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+      {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-      <div className="mt-8 overflow-x-auto rounded-lg border border-slate-800">
+      <div className="mt-8 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
         <table className="w-full text-sm">
-          <thead className="bg-slate-900 text-left text-slate-400">
+          <thead className="bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
             <tr>
               <th className="px-4 py-2">User</th>
               <th className="px-4 py-2">Role</th>
@@ -106,24 +106,24 @@ export default function TeamManagement() {
           </thead>
           <tbody>
             {members.map((m) => (
-              <tr key={m.user_id} className="border-t border-slate-800">
+              <tr key={m.user_id} className="border-t border-slate-200 dark:border-slate-800">
                 <td className="px-4 py-2 font-mono text-xs">{m.user_id}</td>
                 <td className="px-4 py-2">
                   <select
                     value={m.role}
                     onChange={(e) => handleRoleChange(m.user_id, e.target.value)}
-                    className="rounded-md border border-slate-700 bg-slate-800 px-2 py-1 text-sm outline-none"
+                    className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-2 py-1 text-sm outline-none"
                   >
                     <option value="owner">Owner</option>
                     <option value="admin">Admin</option>
                     <option value="member">Member</option>
                   </select>
                 </td>
-                <td className="px-4 py-2 text-slate-400">{new Date(m.joined_at).toLocaleDateString()}</td>
+                <td className="px-4 py-2 text-slate-500 dark:text-slate-400">{new Date(m.joined_at).toLocaleDateString()}</td>
                 <td className="px-4 py-2 text-right">
                   <button
                     onClick={() => setRemoveTarget(m.user_id)}
-                    className="text-sm text-red-400 hover:underline"
+                    className="text-sm text-red-600 dark:text-red-400 hover:underline"
                   >
                     Remove
                   </button>

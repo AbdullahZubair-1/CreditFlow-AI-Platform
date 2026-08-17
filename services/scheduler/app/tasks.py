@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.celery_app import celery_app
 from app.config import settings
-from app.db import async_session_factory
+from app.db import async_session_factory, engine
 from app.events import publish_content_scheduled
 from app.models import ScheduledPost
 from app.redis_client import try_acquire_lock
@@ -26,20 +26,34 @@ def scan_due_scheduled_posts() -> None:
 
 
 async def _scan_due_scheduled_posts_async() -> None:
-    now = datetime.now(UTC)
-    async with async_session_factory() as session:
-        due = (
-            await session.scalars(
-                select(ScheduledPost).where(ScheduledPost.status == "scheduled", ScheduledPost.publish_at <= now)
-            )
-        ).all()
-        due_ids = [row.id for row in due]
+    # `engine` (app/db.py) is created once at module import time, but this
+    # whole coroutine runs inside a brand-new event loop on every single
+    # Celery task invocation (asyncio.run() below always makes a fresh
+    # one). asyncpg connections are bound to the loop that created them, so
+    # a connection checked back into the pool at the end of one loop is
+    # invalid on the next — this call failed with "attached to a different
+    # loop" on its very second invocation and "another operation is in
+    # progress" on every one after that, meaning no scheduled post has
+    # ever actually been able to fire. Disposing the engine at the end of
+    # this loop's run empties the pool before the loop dies, so the next
+    # asyncio.run() lazily opens fresh, correctly-loop-bound connections.
+    try:
+        now = datetime.now(UTC)
+        async with async_session_factory() as session:
+            due = (
+                await session.scalars(
+                    select(ScheduledPost).where(ScheduledPost.status == "scheduled", ScheduledPost.publish_at <= now)
+                )
+            ).all()
+            due_ids = [row.id for row in due]
 
-    for scheduled_id in due_ids:
-        try:
-            await _fire_if_locked(scheduled_id)
-        except Exception:  # noqa: BLE001
-            logger.exception("failed to fire scheduled post %s", scheduled_id)
+        for scheduled_id in due_ids:
+            try:
+                await _fire_if_locked(scheduled_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("failed to fire scheduled post %s", scheduled_id)
+    finally:
+        await engine.dispose()
 
 
 async def _fire_if_locked(scheduled_id) -> None:

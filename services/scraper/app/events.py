@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import aio_pika
@@ -30,7 +30,7 @@ def _envelope(routing_key: str, data: dict[str, Any]) -> dict[str, Any]:
     return {
         "event_id": str(uuid.uuid4()),
         "event_type": routing_key,
-        "occurred_at": datetime.now(UTC).isoformat(),
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
 
@@ -61,7 +61,7 @@ async def _is_processed(event_id: str) -> bool:
 
 
 async def _mark_processed(event_id: str) -> None:
-    await mongo.processed_events().insert_one({"event_id": event_id, "processed_at": datetime.now(UTC)})
+    await mongo.processed_events().insert_one({"event_id": event_id, "processed_at": datetime.now(timezone.utc)})
 
 
 async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
@@ -85,7 +85,7 @@ async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
     if existing_document:
         # The crawl already happened; only the status update didn't land.
         await mongo.scrape_jobs().update_one(
-            {"_id": scrape_job_id}, {"$set": {"status": "completed", "completed_at": datetime.now(UTC)}}
+            {"_id": scrape_job_id}, {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc)}}
         )
         return
 
@@ -107,13 +107,13 @@ async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
             "title": result["title"],
             "text_content": result["text_content"],
             "html": result["html"],
-            "created_at": datetime.now(UTC),
+            "created_at": datetime.now(timezone.utc),
         }
     )
 
     await mongo.scrape_jobs().update_one(
         {"_id": scrape_job_id},
-        {"$set": {"status": "completed", "completed_at": datetime.now(UTC)}},
+        {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc)}},
     )
 
     await _publish_result(
@@ -124,7 +124,7 @@ async def _handle_scrape_requested(payload: dict[str, Any]) -> None:
 async def _mark_failed(scrape_job_id: str, reason: str) -> None:
     await mongo.scrape_jobs().update_one(
         {"_id": scrape_job_id},
-        {"$set": {"status": "failed", "error_reason": reason[:255], "completed_at": datetime.now(UTC)}},
+        {"$set": {"status": "failed", "error_reason": reason[:255], "completed_at": datetime.now(timezone.utc)}},
     )
     await _publish_result("scrape.failed", {"scrape_job_id": scrape_job_id, "reason": reason})
 

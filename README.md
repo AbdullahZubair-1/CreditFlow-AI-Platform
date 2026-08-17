@@ -156,8 +156,9 @@ gateway (FastAPI, :8080)  ── JWT verification, Redis rate limiting, proxies 
                     the spec, no local mirror), User/Tenant's, Billing's, Credits', and
                     Usage's new /internal/* endpoints for the per-account overview
 
-Infra: postgres (:5432, one instance/many schemas), redis (:6379), rabbitmq (:5672, mgmt UI :15672),
-       mongo (:27017, Scraper Service only)
+Infra: postgres (:5432, one instance/many schemas — runs natively on the host, not in Docker;
+       see "Local setup"), redis (:6379), rabbitmq (:5672, mgmt UI :15672), mongo (:27017, Scraper
+       Service only)
 ```
 
 ### Billing Service notes
@@ -260,15 +261,37 @@ The Gateway verifies the JWT once and forwards trusted `X-User-Id` / `X-Account-
 
 ## Local setup
 
-1. Copy `.env.example` to `.env`. Generate a dev RS256 keypair and paste the PEM contents in (see the comment in `.env.example` for the exact `openssl` commands), or reuse the one already generated for this session.
-2. `docker-compose up --build`
-3. Frontend: http://localhost:5173 — Gateway: http://localhost:8080 — RabbitMQ management UI: http://localhost:15672 (guest/guest)
+Postgres runs **natively on the host**, not as a container — every other piece of infrastructure (Redis, RabbitMQ, MongoDB) is still fully containerized. This was a deliberate choice for this environment (an already-installed native Postgres), not a spec requirement; swapping back to a containerized Postgres is a small `docker-compose.yml` change (see the git history around the commit that made this switch) if you'd rather have a fully self-contained stack.
 
-> This environment (where the code was generated) does not have Docker or Node.js installed, so `docker-compose up` and the frontend build have **not** been run end-to-end here. What has been verified: every Python service's FastAPI app imports cleanly with its real dependencies installed, and the Gateway responds correctly to `TestClient` requests (health check, error-schema stub routes). Run the steps below on a machine with Docker to confirm the full flow.
+1. Install PostgreSQL locally (this was built against PostgreSQL 18 on Windows) and make sure it's running on port 5432.
+2. Create the app's role and database:
+   ```
+   psql -U postgres -c "CREATE ROLE creditflow LOGIN PASSWORD 'creditflow';"
+   psql -U postgres -c "CREATE DATABASE creditflow OWNER creditflow;"
+   ```
+3. Docker containers reach the host via `host.docker.internal`, which arrives as a different source IP than `localhost` — Postgres's `pg_hba.conf` needs a rule allowing it, or every service's `DATABASE_URL` connection will fail with an auth/connection error that's easy to mistake for a code bug. Append (adjust the range if your Docker/WSL2 setup differs) and reload:
+   ```
+   host    all             all             172.16.0.0/12           scram-sha-256
+   host    all             all             192.168.0.0/16          scram-sha-256
+   ```
+   then `SELECT pg_reload_conf();` (no restart needed — `pg_hba.conf` changes apply on reload).
+4. Copy `.env.example` to `.env`. Generate a dev RS256 keypair and paste the PEM contents in (see the comment in `.env.example` for the exact `openssl` commands), or reuse the one already generated for this session.
+5. `docker-compose up --build`
+6. Frontend: http://localhost:5173 — Gateway: http://localhost:8080 — RabbitMQ management UI: http://localhost:15672 (guest/guest)
+
+**This has now actually been run, end-to-end, on a real machine** — not just statically verified. All 19 containers (13 backend services + Gateway + frontend + Redis/RabbitMQ/MongoDB + the Scheduler's worker/beat pair) come up and stay up; every service's `/healthz` returns `200`; a real signup through the Gateway creates rows in Postgres and — via a real RabbitMQ round-trip — an individual account and owner membership in the User/Tenant service, confirmed by querying Postgres directly afterward. Three real bugs surfaced during this pass and are already fixed (see "Bugs found via live testing" below); nothing here is theoretical anymore.
+
+### Bugs found via live testing (already fixed)
+
+Everything up to this point in the document had only been statically verified (imports, `py_compile`, `TestClient` hits with no real infrastructure behind them) — the following three only surfaced once the full stack actually ran together, which is exactly the gap a live test is supposed to close:
+
+1. **Scraper's Dockerfile pinned an incompatible Python version.** It's built on Playwright's official image (`mcr.microsoft.com/playwright/python:v1.45.0-jammy`), which ships Python 3.10 — but `libs/py-shared`'s `pyproject.toml` declared `requires-python = ">=3.11"` with no actual technical basis (nothing in the shared library uses 3.11-only syntax; every file already has `from __future__ import annotations`). Lowered to `>=3.10`.
+2. **Scraper's own code used `datetime.UTC`**, a constant that doesn't exist before Python 3.11 — a second, deeper layer of the same version mismatch, invisible to every previous check in this repo because those all ran against a local Python 3.14 interpreter, never the actual Playwright base image. Fixed by switching to the version-portable `datetime.timezone.utc` in Scraper's three affected files (`app/api/routes.py`, `app/events.py`, `app/recurring.py`) — every other service stays on `datetime.UTC` since they run on `python:3.11-slim` and have no such constraint.
+3. **Every RabbitMQ consumer had a silent, unrecoverable startup race.** `libs/py-shared/py_shared/rabbitmq.py`'s `get_connection()` had no retry logic on the *first* connection attempt — and on a real `docker-compose up --build` cold start, nearly every one of the 13 consumer-declaring services hit "Connection refused" at least once, because Docker's healthcheck can report RabbitMQ "healthy" before its AMQP listener actually accepts connections. Since every service starts its consumer via a bare `asyncio.create_task(...)` with no supervisor above it, that first failure killed the consumer forever — HTTP endpoints kept responding normally the whole time, so nothing *looked* broken; events just silently stopped being processed. Fixed with exponential-backoff retry (10 attempts, 1s→30s) in the one shared `get_connection()` function every service's consumer goes through, rather than patching each service individually. Verified after the fix: a genuine cold `docker-compose down && docker-compose up --build -d` now brings up all 20 real RabbitMQ queues with exactly one active consumer each and zero stuck messages, confirmed via the RabbitMQ management API — not just "the container says Up."
 
 ## Verifying Slice 1 end-to-end
 
-1. `docker-compose up --build` brings up postgres/redis/rabbitmq/gateway/auth/user-tenant/frontend cleanly.
+1. `docker-compose up --build` brings up redis/rabbitmq/gateway/auth/user-tenant/frontend cleanly (Postgres runs natively on the host — see "Local setup" above).
 2. Sign up via the frontend (or `POST /auth/signup` on the Gateway) → a row appears in `auth.users`; a `user.registered` event is visible in the RabbitMQ management UI; the User/Tenant service consumes it exactly once, creating rows in `usertenant.accounts` and `usertenant.account_members` (check no duplicate account rows if you restart the `user-tenant` container mid-flow — the `processed_events` table should prevent double-processing).
 3. Log in → the returned JWT (paste into [jwt.io](https://jwt.io) to inspect) contains `user_id`, `account_id`, `role`, `jti`; the `jti` is present in Redis (`redis-cli KEYS 'jti:*'`) with a TTL matching the access token expiry.
 4. Log out → the `jti` is removed from Redis; a subsequent request with the old access token is rejected at the Gateway with `401 invalid_token`.

@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
@@ -36,7 +36,7 @@ async def create_scrape_job(
         )
 
     job_id = str(uuid.uuid4())
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     interval = RECURRENCE_INTERVALS_SECONDS[body.recurrence]
 
     doc = {

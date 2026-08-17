@@ -4,7 +4,7 @@ scanning for jobs whose next_run_at has passed and re-triggering them."""
 import asyncio
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app import events, mongo
 from app.config import RECURRENCE_INTERVALS_SECONDS, settings
@@ -13,7 +13,7 @@ logger = logging.getLogger("scraper.recurring")
 
 
 async def scan_due_recurring_jobs() -> None:
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     cursor = mongo.scrape_jobs().find(
         {"recurrence": {"$in": ["daily", "weekly"]}, "next_run_at": {"$lte": now}}
     )

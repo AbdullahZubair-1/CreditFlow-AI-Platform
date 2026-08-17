@@ -10,6 +10,7 @@ Conventions enforced here (per the platform spec):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -22,6 +23,9 @@ from aio_pika.abc import AbstractIncomingMessage
 logger = logging.getLogger("py_shared.rabbitmq")
 
 MAX_RETRIES = 5
+CONNECT_MAX_ATTEMPTS = 10
+CONNECT_INITIAL_DELAY_SECONDS = 1.0
+CONNECT_MAX_DELAY_SECONDS = 30.0
 
 
 def _amqp_url() -> str:
@@ -29,7 +33,41 @@ def _amqp_url() -> str:
 
 
 async def get_connection() -> aio_pika.RobustConnection:
-    return await aio_pika.connect_robust(_amqp_url())
+    """Retries the *initial* connection with exponential backoff.
+
+    Found in practice: a Docker healthcheck can report RabbitMQ "healthy"
+    microseconds before its AMQP listener actually accepts connections.
+    `connect_robust()` handles reconnection after a connection drops, but
+    a failure on the very first attempt raises immediately — and since
+    every caller here is a bare `asyncio.create_task(start_consumer())`
+    with no supervisor above it, that exception silently kills the
+    consumer task forever while the service's HTTP endpoints keep working
+    fine, with nothing in the logs to make it obvious short of grepping
+    for "Connection refused" at startup.
+    """
+    delay = CONNECT_INITIAL_DELAY_SECONDS
+    last_exc: Exception | None = None
+
+    for attempt in range(1, CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            return await aio_pika.connect_robust(_amqp_url())
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt == CONNECT_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "RabbitMQ connection attempt %d/%d failed (%s), retrying in %.1fs",
+                attempt,
+                CONNECT_MAX_ATTEMPTS,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, CONNECT_MAX_DELAY_SECONDS)
+
+    raise ConnectionError(
+        f"Could not connect to RabbitMQ after {CONNECT_MAX_ATTEMPTS} attempts"
+    ) from last_exc
 
 
 async def publish_event(

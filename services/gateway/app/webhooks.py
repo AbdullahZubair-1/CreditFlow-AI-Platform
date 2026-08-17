@@ -53,6 +53,13 @@ async def handle_stripe_webhook(payload: bytes, sig_header: str) -> None:
         "event_id": event["id"],
         "event_type": f"billing.{event['type']}",
         "occurred_at": datetime.now(UTC).isoformat(),
-        "data": event,
+        # stripe.Event is a StripeObject, not a plain dict — dict-like
+        # access (event["id"], event["type"]) works fine on it, but
+        # json.dumps (inside publish_event) can't serialize it directly
+        # and raised a TypeError on every single webhook delivery. This
+        # silently 500'd the relay to RabbitMQ for every Stripe event
+        # ever received, so nothing billing-related (plan upgrades,
+        # invoices, credit grants) ever actually settled.
+        "data": event.to_dict(),
     }
     await publish_event(channel, WEBHOOK_EVENTS_EXCHANGE, envelope["event_type"], envelope)

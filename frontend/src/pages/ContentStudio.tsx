@@ -17,6 +17,7 @@ import {
 } from "../api/generations";
 import AppLayout from "../components/AppLayout";
 import ConfirmDialog from "../components/ConfirmDialog";
+import ContentDetailModal from "../components/ContentDetailModal";
 import { useAuth } from "../context/AuthContext";
 
 const PUBLISH_ROLES = new Set(["owner", "admin"]);
@@ -34,6 +35,7 @@ export default function ContentStudio() {
   const [error, setError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Content[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [detailTarget, setDetailTarget] = useState<{ content: Content; mode: "read" | "edit" } | null>(null);
   const stopStreamRef = useRef<(() => void) | null>(null);
 
   function refreshDrafts() {
@@ -97,6 +99,13 @@ export default function ContentStudio() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to update status.");
     }
+  }
+
+  async function handleSaveDetail(fields: { title: string; body: string }) {
+    if (!detailTarget) return;
+    const updated = await updateContent(detailTarget.content.id, fields);
+    setDetailTarget({ content: updated, mode: "read" });
+    refreshDrafts();
   }
 
   async function confirmDelete() {
@@ -188,6 +197,18 @@ export default function ContentStudio() {
                 <span className="rounded-full bg-slate-800 px-2 py-0.5 text-xs capitalize text-slate-300">
                   {content.status}
                 </span>
+                <button
+                  onClick={() => setDetailTarget({ content, mode: "read" })}
+                  className="text-xs text-slate-300 hover:underline"
+                >
+                  Read
+                </button>
+                <button
+                  onClick={() => setDetailTarget({ content, mode: "edit" })}
+                  className="text-xs text-indigo-400 hover:underline"
+                >
+                  Edit
+                </button>
                 {canPublish && content.status !== "published" && (
                   <button
                     onClick={() => handlePublishStep(content)}
@@ -214,6 +235,15 @@ export default function ContentStudio() {
         onConfirm={confirmDelete}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {detailTarget && (
+        <ContentDetailModal
+          content={detailTarget.content}
+          mode={detailTarget.mode}
+          onClose={() => setDetailTarget(null)}
+          onSave={handleSaveDetail}
+        />
+      )}
     </AppLayout>
   );
 }

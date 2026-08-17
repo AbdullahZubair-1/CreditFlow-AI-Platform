@@ -7,7 +7,7 @@ import aio_pika
 from sqlalchemy import select
 
 from app import stripe_client
-from app.config import settings
+from app.config import PRICE_ID_TO_PLAN, settings
 from app.db import async_session_factory
 from app.models import BillingAccount, Invoice, ProcessedEvent, Subscription, SubscriptionEvent
 from app.outbox import add_outbox_event
@@ -93,7 +93,7 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
             await _apply_invoice_paid(session, obj)
         elif event_type == "invoice.payment_failed":
             await _apply_payment_failed(session, obj)
-        elif event_type == "customer.subscription.updated":
+        elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
             await _apply_subscription_updated(session, obj)
         elif event_type == "checkout.session.completed":
             await _apply_checkout_session_completed(session, obj)
@@ -200,6 +200,16 @@ async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:
 
 
 async def _apply_subscription_updated(session, subscription_obj: dict[str, Any]) -> None:
+    """Handles both customer.subscription.created (a brand-new checkout)
+    and customer.subscription.updated (a plan change via a Stripe-side
+    action, e.g. the customer portal) — either way, the source of truth
+    for which plan is actually active is the Stripe Price attached to the
+    subscription's line item, not anything CreditFlow's own /subscription
+    PATCH endpoint may or may not have set. Without this, a brand-new
+    subscription's plan_tier stayed "free" forever: nothing else in this
+    webhook flow ever wrote it, since customer.subscription.created wasn't
+    even routed here until now, and this handler previously only touched
+    status, never plan_tier."""
     account_id = await _account_id_for_customer(session, subscription_obj["customer"])
     if account_id is None:
         return
@@ -211,10 +221,19 @@ async def _apply_subscription_updated(session, subscription_obj: dict[str, Any])
     subscription.stripe_subscription_id = subscription_obj["id"]
     subscription.status = subscription_obj["status"]
 
+    price_id = subscription_obj["items"]["data"][0]["price"]["id"]
+    plan_tier = PRICE_ID_TO_PLAN.get(price_id)
+    if plan_tier:
+        subscription.plan_tier = plan_tier
+
     add_outbox_event(
         session,
         "subscription.updated",
-        {"account_id": str(account_id), "status": subscription_obj["status"]},
+        {
+            "account_id": str(account_id),
+            "status": subscription_obj["status"],
+            "plan_tier": subscription.plan_tier,
+        },
     )
 
 

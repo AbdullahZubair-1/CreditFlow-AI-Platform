@@ -17,7 +17,8 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard/linkedin", label: "LinkedIn" },
   { to: "/dashboard/team", label: "Team", ownerOnly: true },
   { to: "/dashboard/billing", label: "Billing", ownerOnly: true },
-  { to: "/dashboard/credits", label: "Credits & Marketplace", ownerOnly: true },
+  { to: "/dashboard/credits", label: "Credits", ownerOnly: true },
+  { to: "/dashboard/marketplace", label: "Marketplace", ownerOnly: true },
 ];
 
 const OWNER_ROLES = new Set(["owner", "admin"]);

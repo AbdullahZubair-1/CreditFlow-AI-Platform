@@ -51,6 +51,26 @@ export function purchaseListing(listingId: string) {
   return apiFetch<{ checkout_url: string }>(`/credits/marketplace/listings/${listingId}/purchase`, {
     method: "POST",
     body: {
+      success_url: `${origin}/dashboard/marketplace?purchase=success`,
+      cancel_url: `${origin}/dashboard/marketplace?purchase=cancelled`,
+    },
+  });
+}
+
+export function getPlanGrants() {
+  return apiFetch<Record<string, number>>("/credits/plan-grants");
+}
+
+export function getCreditsPricing() {
+  return apiFetch<{ cents_per_credit: number }>("/billing/credits/pricing");
+}
+
+export function createDirectPurchaseCheckout(creditsAmount: number) {
+  const origin = window.location.origin;
+  return apiFetch<{ checkout_url: string }>("/billing/credits/checkout-session", {
+    method: "POST",
+    body: {
+      credits_amount: creditsAmount,
       success_url: `${origin}/dashboard/credits?purchase=success`,
       cancel_url: `${origin}/dashboard/credits?purchase=cancelled`,
     },

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import stripe_client
-from app.config import PLAN_DISPLAY_PRICES_CENTS, PLAN_PRICE_IDS
+from app.config import PLAN_DISPLAY_PRICES_CENTS, PLAN_PRICE_IDS, settings
 from app.db import get_session
 from app.identity import Identity, require_identity
 from app.models import BillingAccount, Invoice, Refund, Subscription
@@ -14,6 +14,8 @@ from app.outbox import add_outbox_event
 from app.schemas import (
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    CreditsPricingResponse,
+    DirectCreditPurchaseRequest,
     InvoiceResponse,
     OneTimeCheckoutRequest,
     PlanResponse,
@@ -99,18 +101,28 @@ async def create_checkout_session(
     return CheckoutSessionResponse(checkout_url=checkout_url)
 
 
-@router.post("/checkout-sessions/one-time", response_model=CheckoutSessionResponse)
+@router.post("/internal/checkout-sessions/one-time", response_model=CheckoutSessionResponse)
 async def create_one_time_checkout_session(
     body: OneTimeCheckoutRequest,
     identity: Identity = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
 ) -> CheckoutSessionResponse:
-    """Used by other services (e.g. Credits/Marketplace) to charge an
-    account for a one-off purchase — the caller passes the buyer's own
-    account identity headers through, same as any Gateway-proxied call, and
-    arbitrary metadata that a Billing webhook consumer downstream (see
-    events.py) uses to route the resulting `checkout.session.completed`
-    event back to the right domain event."""
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes (see _reject_internal_paths in
+    services/gateway/app/api/routes.py), so this is reachable only via a
+    direct container-to-container call, not through the public internet.
+    That matters here specifically: amount_cents and metadata are both
+    caller-controlled, with no server-side price computation of their own
+    — fine for a trusted internal caller (Credits computes the real price
+    itself before calling this), but it would let an arbitrary frontend
+    caller request, say, a $0.01 checkout tagged with metadata claiming a
+    $500 marketplace purchase completed. Used by Credits/Marketplace to
+    charge an account for a one-off purchase; the caller passes the
+    buyer's own account identity headers through, same as any
+    Gateway-proxied call would, and arbitrary metadata that a Billing
+    webhook consumer downstream (see events.py) uses to route the
+    resulting `checkout.session.completed` event back to the right
+    domain event."""
     billing_account = await session.get(BillingAccount, uuid.UUID(identity.account_id))
     if not billing_account:
         raise ApiError(
@@ -126,6 +138,54 @@ async def create_one_time_checkout_session(
             body.currency,
             body.description,
             body.metadata,
+            body.success_url,
+            body.cancel_url,
+        )
+    except stripe.error.StripeError as exc:  # noqa: BLE001
+        raise ApiError("stripe_error", str(exc), 502) from exc
+
+    return CheckoutSessionResponse(checkout_url=checkout_url)
+
+
+@router.get("/credits/pricing", response_model=CreditsPricingResponse)
+async def get_credits_pricing() -> CreditsPricingResponse:
+    return CreditsPricingResponse(cents_per_credit=settings.cents_per_credit)
+
+
+@router.post("/credits/checkout-session", response_model=CheckoutSessionResponse)
+async def create_credit_purchase_checkout_session(
+    body: DirectCreditPurchaseRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> CheckoutSessionResponse:
+    """Direct credit purchase, separate from subscribing to a plan — the
+    price and metadata are computed here, server-side, from
+    body.credits_amount alone; unlike /internal/checkout-sessions/one-time
+    above, this endpoint is public (Gateway-reachable) specifically
+    because it never trusts a caller-supplied amount_cents or metadata."""
+    if body.credits_amount <= 0:
+        raise ApiError("invalid_amount", "credits_amount must be positive.", 400)
+
+    billing_account = await session.get(BillingAccount, uuid.UUID(identity.account_id))
+    if not billing_account:
+        raise ApiError(
+            "billing_not_ready",
+            "This account's Stripe customer hasn't been provisioned yet. Try again shortly.",
+            409,
+        )
+
+    amount_cents = body.credits_amount * settings.cents_per_credit
+    try:
+        checkout_url = stripe_client.create_one_time_checkout_session(
+            billing_account.stripe_customer_id,
+            amount_cents,
+            "usd",
+            f"{body.credits_amount} CreditFlow credits",
+            {
+                "purpose": "credit_purchase",
+                "account_id": identity.account_id,
+                "credits_amount": str(body.credits_amount),
+            },
             body.success_url,
             body.cancel_url,
         )

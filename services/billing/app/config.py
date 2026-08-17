@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     dunning_grace_period_days: int = 3
     dunning_scan_interval_seconds: float = 60.0
 
+    # Official direct-purchase rate for buying credits outside a plan
+    # subscription — Credits' marketplace listing cap (95% of this) must
+    # stay in sync with this value; see services/credits/app/config.py.
+    cents_per_credit: int = 9
+
     class Config:
         env_file = ".env"
 

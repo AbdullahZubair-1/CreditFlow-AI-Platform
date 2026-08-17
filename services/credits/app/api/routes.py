@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import billing_client
+from app.config import CENTS_PER_CREDIT, MARKETPLACE_MIN_DISCOUNT_PERCENT, PLAN_CREDIT_GRANTS
 from app.db import get_session
 from app.identity import Identity, require_identity
 from app.ledger import get_balance
@@ -21,6 +22,14 @@ from app.schemas import (
 from py_shared.errors import ApiError
 
 router = APIRouter()
+
+
+@router.get("/plan-grants")
+async def get_plan_grants() -> dict[str, int]:
+    """How many credits each subscription plan grants per billing cycle —
+    lets the frontend show real numbers (e.g. "Pro: 1,000 credits/mo")
+    instead of hardcoding a copy of this table that could drift."""
+    return PLAN_CREDIT_GRANTS
 
 
 @router.get("/balance", response_model=BalanceResponse)
@@ -91,6 +100,21 @@ async def create_listing(
 ) -> ListingResponse:
     if body.credits_amount <= 0 or body.price_cents <= 0:
         raise ApiError("invalid_listing", "credits_amount and price_cents must be positive.", 400)
+
+    # Marketplace credits must always be at least MARKETPLACE_MIN_DISCOUNT_PERCENT
+    # cheaper per credit than buying directly from us — cross-multiplied to
+    # stay in exact integer cents rather than compare floats:
+    # price_cents/credits_amount <= CENTS_PER_CREDIT * (1 - discount/100)
+    #   <=> price_cents * 100 <= credits_amount * CENTS_PER_CREDIT * (100 - discount)
+    if body.price_cents * 100 > body.credits_amount * CENTS_PER_CREDIT * (100 - MARKETPLACE_MIN_DISCOUNT_PERCENT):
+        max_price_cents = (body.credits_amount * CENTS_PER_CREDIT * (100 - MARKETPLACE_MIN_DISCOUNT_PERCENT)) // 100
+        raise ApiError(
+            "price_too_high",
+            f"Marketplace price must be at least {MARKETPLACE_MIN_DISCOUNT_PERCENT}% below the direct-purchase "
+            f"rate (${CENTS_PER_CREDIT / 100:.2f}/credit) — max ${max_price_cents / 100:.2f} for "
+            f"{body.credits_amount} credits.",
+            400,
+        )
 
     seller_account_id = uuid.UUID(identity.account_id)
     balance = await get_balance(session, seller_account_id)

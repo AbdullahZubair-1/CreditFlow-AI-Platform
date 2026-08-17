@@ -22,3 +22,11 @@ PLAN_CREDIT_GRANTS: dict[str, int] = {
     "pro": 1000,
     "team": 5000,
 }
+
+# Must match Billing's settings.cents_per_credit (services/billing/app/
+# config.py) — that's the official direct-purchase rate. MIN_DISCOUNT is
+# the platform-wide rule that a marketplace listing must always price its
+# credits at least this many percent below buying them directly from us,
+# enforced server-side in create_listing.
+CENTS_PER_CREDIT = 9
+MARKETPLACE_MIN_DISCOUNT_PERCENT = 5

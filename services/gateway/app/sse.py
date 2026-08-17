@@ -2,7 +2,7 @@
 Server-Sent Events, by subscribing to the same Redis pub/sub channel the
 AI Generation Service publishes to (channel naming convention
 `generation:{job_id}` — see that service's app/pubsub.py). The Gateway
-never talks to OpenRouter directly; it's purely a relay so the frontend
+never talks to Groq directly; it's purely a relay so the frontend
 only ever has to hold one connection open, to the Gateway.
 """
 import json

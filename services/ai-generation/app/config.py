@@ -7,10 +7,13 @@ class Settings(BaseSettings):
     rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/"
     usage_service_url: str = "http://usage:8000"
 
-    # Placeholder — replace with a real key from https://openrouter.ai
-    # before exercising generation end-to-end.
-    openrouter_api_key: str = "sk-or-placeholder"
-    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Placeholder — replace with a real key from
+    # https://console.groq.com/keys before exercising generation
+    # end-to-end. The platform spec names OpenRouter as the text AI
+    # provider; this project uses Groq instead (same OpenAI-compatible
+    # chat completions shape, just a different host/key/model catalog).
+    groq_api_key: str = "gsk_placeholder"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
 
     # Pollinations.ai needs no API key (bonus image generation).
     pollinations_base_url: str = "https://image.pollinations.ai/prompt"
@@ -23,9 +26,11 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# At least 2 OpenRouter model choices, per the spec — one fast/cheap, one
-# higher quality. Both are real OpenRouter model slugs; swap freely.
+# At least 2 model choices, per the spec — one fast/cheap, one higher
+# quality. Both are real Groq-hosted model slugs; swap freely (Groq's
+# catalog changes over time — check https://console.groq.com/docs/models
+# if either of these gets deprecated).
 AVAILABLE_MODELS: dict[str, str] = {
-    "fast": "meta-llama/llama-3.1-8b-instruct",
-    "quality": "openai/gpt-4o-mini",
+    "fast": "llama-3.1-8b-instant",
+    "quality": "llama-3.3-70b-versatile",
 }

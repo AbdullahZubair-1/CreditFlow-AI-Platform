@@ -208,13 +208,13 @@ async def webhook_linkedin() -> Response:
     raise ApiError("not_implemented", "LinkedIn webhook arrives with the Social Publishing slice.", 501)
 
 
-@router.post("/webhooks/openrouter")
-async def webhook_openrouter() -> Response:
-    # OpenRouter's chat completions API is request/response (or streaming
-    # over the initiating HTTP connection) — it has no webhook delivery
-    # model to receive from, so this stub stays a placeholder even after
-    # the AI Generation slice landed real streaming via SSE re-relay below.
-    raise ApiError("not_implemented", "OpenRouter has no webhook delivery model for chat completions.", 501)
+@router.post("/webhooks/groq")
+async def webhook_groq() -> Response:
+    # Groq's chat completions API is request/response (or streaming over
+    # the initiating HTTP connection) — it has no webhook delivery model
+    # to receive from, so this stub stays a placeholder even after the AI
+    # Generation slice landed real streaming via SSE re-relay below.
+    raise ApiError("not_implemented", "Groq has no webhook delivery model for chat completions.", 501)
 
 
 @router.get("/sse/{job_id}")

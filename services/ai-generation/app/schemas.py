@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class CreateGenerationRequest(BaseModel):
     prompt: str
-    model: str = "fast"  # key into AVAILABLE_MODELS, not a raw OpenRouter slug
+    model: str = "fast"  # key into AVAILABLE_MODELS, not a raw Groq model slug
     # "post" generations get turned into a draft Content record by the
     # Content Service; other purposes (e.g. ad-hoc chat) are ignored by it.
     purpose: str = "post"

@@ -135,7 +135,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       USAGE_SERVICE_URL: http://usage:8000
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-sk-or-placeholder}
+      GROQ_API_KEY: ${GROQ_API_KEY:-gsk_placeholder}
     depends_on:
       redis:
         condition: service_healthy

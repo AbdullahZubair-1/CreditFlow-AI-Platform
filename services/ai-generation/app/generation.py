@@ -2,13 +2,13 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from app import events, openrouter_client, pubsub
+from app import events, groq_client, pubsub
 from app.db import async_session_factory
 from app.models import GenerationJob, PromptHistory
 
 logger = logging.getLogger("ai_generation.generation")
 
-# Placeholder pricing (OpenRouter's actual per-model rates vary widely) —
+# Placeholder pricing (Groq's actual per-model rates vary widely) —
 # illustrative only, same "placeholder" treatment as Billing's plan prices
 # and Credits' grant amounts. 1 cent per 100 tokens.
 CENTS_PER_100_TOKENS = 1
@@ -25,7 +25,7 @@ async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, pr
     cancelled = False
 
     try:
-        async for chunk in openrouter_client.stream_completion(model_slug, prompt):
+        async for chunk in groq_client.stream_completion(model_slug, prompt):
             if await pubsub.is_cancel_requested(str(job_id)):
                 cancelled = True
                 break

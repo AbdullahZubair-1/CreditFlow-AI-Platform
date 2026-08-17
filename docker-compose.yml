@@ -47,7 +47,7 @@ services:
       dockerfile: services/auth/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
@@ -66,7 +66,7 @@ services:
       dockerfile: services/user-tenant/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       rabbitmq:
@@ -80,7 +80,7 @@ services:
       dockerfile: services/billing/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
       STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-price_pro_placeholder}
@@ -97,7 +97,7 @@ services:
       dockerfile: services/credits/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       BILLING_SERVICE_URL: http://billing:8000
     depends_on:
@@ -114,7 +114,7 @@ services:
       dockerfile: services/usage/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       REDIS_URL: redis://redis:6379/1
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
@@ -131,7 +131,7 @@ services:
       dockerfile: services/ai-generation/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       USAGE_SERVICE_URL: http://usage:8000
@@ -152,7 +152,7 @@ services:
       dockerfile: services/content/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
       rabbitmq:
@@ -168,7 +168,7 @@ services:
       dockerfile: services/scheduler/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       CELERY_REDIS_URL: redis://redis:6379/2
     depends_on:
@@ -186,7 +186,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       CELERY_REDIS_URL: redis://redis:6379/2
     depends_on:
@@ -202,7 +202,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       CELERY_REDIS_URL: redis://redis:6379/2
     depends_on:
@@ -217,7 +217,7 @@ services:
       dockerfile: services/social-publishing/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       CONTENT_SERVICE_URL: http://content:8000
       LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-linkedin-client-id-placeholder}
@@ -256,7 +256,7 @@ services:
       dockerfile: services/notification/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       AUTH_SERVICE_URL: http://auth:8000
       USER_TENANT_SERVICE_URL: http://user-tenant:8000
@@ -280,7 +280,7 @@ services:
       dockerfile: services/admin/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@host.docker.internal:5432/${POSTGRES_DB:-creditflow}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-host.docker.internal}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       REDIS_URL: redis://redis:6379/0
       USER_TENANT_SERVICE_URL: http://user-tenant:8000

@@ -43,6 +43,10 @@ async def create_schedule(
     known = await session.get(AvailableContent, content_id)
     if not known or known.account_id != uuid.UUID(identity.account_id):
         raise ApiError("content_not_found", "This content item is not available to your account.", 404)
+    if known.status != "approved":
+        raise ApiError(
+            "content_not_approved", "Only approved content can be scheduled. Approve it first in Content Studio.", 409
+        )
 
     row = ScheduledPost(
         account_id=uuid.UUID(identity.account_id),

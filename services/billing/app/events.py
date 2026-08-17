@@ -127,11 +127,25 @@ def _plan_tier_from_invoice_lines(invoice_obj: dict[str, Any]) -> str | None:
     see _apply_subscription_updated) arrives before invoice.paid for the
     same checkout. Reading it wrong here silently granted zero credits
     for a real, paid Pro/Team invoice whenever the subscription event
-    happened to process second."""
+    happened to process second.
+
+    A plan switch invoiced via proration_behavior="always_invoice" (see
+    stripe_client.modify_subscription) always carries *multiple* line
+    items — a negative "unused time" credit for the plan being left, and
+    a positive "remaining time" charge for the plan being adopted — and
+    Stripe orders the old plan's credit line first. Blindly reading
+    lines[0] therefore picked the plan being switched *away from*: a real
+    Pro -> Team upgrade granted Team's credits to the invoice that
+    actually billed Pro, and vice versa on a downgrade. Preferring a
+    positive-amount line (a real charge, not a credit for time given up)
+    reliably identifies the plan actually being paid for."""
     lines = invoice_obj.get("lines", {}).get("data", [])
     if not lines:
         return None
-    return PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(lines[0]))
+
+    positive_lines = [line for line in lines if line.get("amount", 0) > 0] or lines
+    best_line = max(positive_lines, key=lambda line: line.get("amount", 0))
+    return PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(best_line))
 
 
 async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:

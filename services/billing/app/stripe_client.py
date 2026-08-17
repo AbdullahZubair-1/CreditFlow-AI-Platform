@@ -66,7 +66,19 @@ def modify_subscription(subscription_id: str, plan: str) -> None:
     stripe.Subscription.modify(
         subscription_id,
         items=[{"id": item_id, "price": price_id}],
-        proration_behavior="create_prorations",
+        # "create_prorations" (the old value) only adds proration line
+        # items to be billed on the *next* regular invoice — nothing is
+        # charged at the moment of the switch. That silently broke the
+        # product expectation that upgrading to a paid tier gets you that
+        # tier's features and credits right away: those are both driven by
+        # a real invoice.paid webhook (see services/billing/app/events.py
+        # and services/credits/app/events.py), which never fires until
+        # Stripe actually invoices something. "always_invoice" makes
+        # Stripe generate and immediately attempt payment on an invoice
+        # for the prorated difference as part of this same call, so a
+        # Pro -> Team switch charges now and unlocks/grants immediately
+        # once that payment succeeds, via the existing webhook pipeline.
+        proration_behavior="always_invoice",
     )
 
 

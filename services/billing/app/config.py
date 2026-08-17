@@ -42,3 +42,9 @@ PLAN_DISPLAY_PRICES_CENTS: dict[str, int] = {
     "pro": 1900,
     "team": 4900,
 }
+
+# Reverse of PLAN_PRICE_IDS — lets a webhook payload's
+# subscription.items.data[0].price.id be translated back into "pro"/"team"
+# so the Subscription row's plan_tier can actually be set to what was
+# purchased (see events._apply_subscription_updated).
+PRICE_ID_TO_PLAN: dict[str, str] = {price_id: plan for plan, price_id in PLAN_PRICE_IDS.items() if price_id}

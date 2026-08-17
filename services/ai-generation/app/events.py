@@ -43,6 +43,7 @@ async def publish_generation_completed(
     completion_tokens: int,
     total_tokens: int,
     cost_cents: int,
+    title: str | None = None,
 ) -> None:
     try:
         channel = await get_channel()
@@ -62,6 +63,11 @@ async def publish_generation_completed(
                     # (harmless) but are ignored by that consumer.
                     "purpose": purpose,
                     "response_text": response_text,
+                    # A real Groq-generated title (see groq_client.
+                    # generate_short_title) — None if that call failed, in
+                    # which case Content falls back to its own first-line
+                    # heuristic rather than the draft having no title at all.
+                    "title": title,
                     "prompt_tokens": prompt_tokens,
                     "completion_tokens": completion_tokens,
                     "total_tokens": total_tokens,

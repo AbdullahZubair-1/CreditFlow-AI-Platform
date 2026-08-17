@@ -101,10 +101,15 @@ async def _handle_generation_completed(payload: dict[str, Any]) -> None:
         if existing:
             return
 
+        # AI Generation asks Groq for a real title up front (see
+        # groq_client.generate_short_title) — the first-line heuristic
+        # below is only a fallback for when that call itself failed, not
+        # the primary path anymore.
+        title = data.get("title") or _derive_title(response_text)
         content = Content(
             account_id=account_id,
             created_by_user_id=user_id,
-            title=_derive_title(response_text),
+            title=title,
             body=response_text,
             status="draft",
             source_generation_job_id=generation_job_id,

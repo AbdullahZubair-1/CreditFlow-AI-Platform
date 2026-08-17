@@ -164,12 +164,60 @@ async def _handle_scrape_completed(payload: dict[str, Any]) -> None:
     await publish_content_created(content)
 
 
+async def _handle_image_generated(payload: dict[str, Any]) -> None:
+    """Attaches the bonus AI-generated image to the draft already created
+    for this generation_job_id (see _handle_generation_completed) — the
+    image is a follow-up action a user takes after text generation
+    finished, so it arrives as a separate event rather than as part of
+    ai.generation_completed's payload."""
+    data = payload["data"]
+    generation_job_id = data["generation_job_id"]
+    image_url = data["image_url"]
+
+    async with async_session_factory() as session:
+        content = await session.scalar(
+            select(Content).where(Content.source_generation_job_id == generation_job_id)
+        )
+        if not content:
+            logger.warning("ai.image_generated for unknown generation_job_id %s, skipping", generation_job_id)
+            return
+        if content.image_url == image_url:
+            return  # already applied (redelivery)
+
+        content.image_url = image_url
+        content.version += 1
+        session.add(
+            ContentVersion(
+                content_id=content.id,
+                version_number=content.version,
+                title=content.title,
+                body=content.body,
+                image_url=content.image_url,
+                edited_by_user_id=content.created_by_user_id,
+            )
+        )
+        await session.commit()
+
+    await publish_content_updated(content)
+
+
+async def _route_ai_event(payload: dict[str, Any]) -> None:
+    event_type = payload.get("event_type")
+    if event_type == "ai.generation_completed":
+        await _handle_generation_completed(payload)
+    elif event_type == "ai.image_generated":
+        await _handle_image_generated(payload)
+
+
 async def start_consumer() -> None:
     channel = await get_channel()
     queue = await declare_durable_queue_with_dlx(
-        channel, AI_EVENTS_EXCHANGE, GENERATION_QUEUE, routing_keys=["ai.generation_completed"]
+        channel,
+        AI_EVENTS_EXCHANGE,
+        GENERATION_QUEUE,
+        routing_keys=["ai.generation_completed", "ai.image_generated"],
     )
-    await consume(channel, queue, AI_EVENTS_EXCHANGE, _handle_generation_completed, _is_processed, _mark_processed)
+    await consume(channel, queue, AI_EVENTS_EXCHANGE, _route_ai_event, _is_processed, _mark_processed)
     logger.info("content consumer listening on %s", GENERATION_QUEUE)
 
     scrape_queue = await declare_durable_queue_with_dlx(

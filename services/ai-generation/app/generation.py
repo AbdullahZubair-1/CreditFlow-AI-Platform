@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from app import events, groq_client, pubsub
 from app.db import async_session_factory
 from app.models import GenerationJob, PromptHistory
+from app.text_cleanup import strip_markdown
 
 logger = logging.getLogger("ai_generation.generation")
 
@@ -39,7 +40,7 @@ async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, pr
                 completion_tokens = usage.get("completion_tokens", 0)
                 total_tokens = usage.get("total_tokens", prompt_tokens + completion_tokens)
 
-        response_text = "".join(response_parts)
+        response_text = strip_markdown("".join(response_parts))
 
         async with async_session_factory() as session:
             job = await session.get(GenerationJob, job_id)

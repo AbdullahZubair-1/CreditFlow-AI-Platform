@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import pollinations_client, pubsub, usage_client
+from app import events, pollinations_client, pubsub, usage_client
 from app.config import AVAILABLE_MODELS
 from app.db import get_session
 from app.generation import run_generation
@@ -142,5 +142,7 @@ async def generate_image(
     )
     session.add(image_job)
     await session.commit()
+
+    await events.publish_image_generated(identity.account_id, str(job_id), image_url)
 
     return GenerateImageResponse(id=str(image_job.id), image_url=image_url)

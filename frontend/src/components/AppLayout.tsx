@@ -69,7 +69,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const isSuperAdmin = claims?.is_superadmin ?? false;
   const isOwner = claims ? OWNER_ROLES.has(claims.role) : false;
   const hasPaidPlan = planTier !== null && PAID_TIERS.has(planTier);
-  const hasTeamPlan = planTier === "team";
+  // Team Management needs a genuine team-type account, not just the Team
+  // plan_tier — see PlanGateRoute.tsx's comment for why those are
+  // separate axes and why conflating them let an "individual" account
+  // gain a second member.
+  const hasTeamPlan = planTier === "team" && currentAccount?.type === "team";
   const planLabel = planTier ? PLAN_LABELS[planTier] ?? planTier : null;
 
   return (

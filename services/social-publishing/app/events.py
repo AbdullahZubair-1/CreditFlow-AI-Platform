@@ -126,12 +126,6 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
             logger.info("job %s already claimed by another delivery, skipping", job.id)
             return
 
-    async with async_session_factory() as session:
-        connection = await session.get(SocialConnection, account_id)
-    if not connection:
-        await _fail_permanently(job, "Account has no connected LinkedIn account.")
-        return
-
     try:
         content = await content_client.get_content(str(account_id), "service", str(content_id))
     except httpx.HTTPStatusError as exc:
@@ -140,6 +134,17 @@ async def _handle_content_scheduled(payload: dict[str, Any]) -> None:
             return
         await _release_claim(job.id)
         raise  # transient — let it retry via the standard bounded-retry-then-DLX path
+
+    # Content fetched first specifically to get created_by_user_id — each
+    # team member connects their own LinkedIn (see models.py's
+    # SocialConnection docstring), so a scheduled post publishes through
+    # whoever actually created it, not a single account-wide default.
+    author_user_id = uuid.UUID(content["created_by_user_id"])
+    async with async_session_factory() as session:
+        connection = await session.get(SocialConnection, (account_id, author_user_id))
+    if not connection:
+        await _fail_permanently(job, "This post's author hasn't connected their own LinkedIn account.")
+        return
 
     access_token = decrypt_token(connection.access_token_encrypted)
 

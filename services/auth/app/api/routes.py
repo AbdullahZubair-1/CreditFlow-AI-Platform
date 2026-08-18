@@ -379,3 +379,22 @@ async def internal_get_user(user_id: uuid.UUID, session: AsyncSession = Depends(
         "email_verified": user.email_verified,
         "created_at": user.created_at.isoformat(),
     }
+
+
+@router.get("/internal/users")
+async def internal_list_users(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only, same trust model as internal_get_user above.
+    Used by the Admin Service's platform-wide user directory (SuperAdmin
+    console) — a flat list of every user on the platform, independent of
+    which account(s) they belong to."""
+    users = (await session.scalars(select(User).order_by(User.created_at.desc()))).all()
+    return [
+        {
+            "user_id": str(user.id),
+            "email": user.email,
+            "email_verified": user.email_verified,
+            "is_platform_admin": user.is_platform_admin,
+            "created_at": user.created_at.isoformat(),
+        }
+        for user in users
+    ]

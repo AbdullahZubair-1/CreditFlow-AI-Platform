@@ -23,6 +23,7 @@ import MarketplacePage from "./pages/MarketplacePage";
 import ProfilePage from "./pages/ProfilePage";
 import ScraperJobs from "./pages/ScraperJobs";
 import SignUp from "./pages/SignUp";
+import SuperAdminUsers from "./pages/SuperAdminUsers";
 import TeamManagement from "./pages/TeamManagement";
 import VerifyEmail from "./pages/VerifyEmail";
 
@@ -163,6 +164,14 @@ export default function App() {
               element={
                 <SuperAdminRoute>
                   <AdminConsole />
+                </SuperAdminRoute>
+              }
+            />
+            <Route
+              path="/admin/directory"
+              element={
+                <SuperAdminRoute>
+                  <SuperAdminUsers />
                 </SuperAdminRoute>
               }
             />

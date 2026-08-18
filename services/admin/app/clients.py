@@ -50,6 +50,13 @@ async def get_user(user_id: str) -> dict | None:
     return await _get_or_none(f"{settings.auth_service_url}/internal/users/{user_id}")
 
 
+async def list_all_users() -> list[dict]:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{settings.auth_service_url}/internal/users")
+        response.raise_for_status()
+        return response.json()
+
+
 async def get_revenue_by_account() -> dict[str, int]:
     """Returns {account_id: total_revenue_cents} for every account with at
     least one paid invoice — a single grouped query on Billing's side

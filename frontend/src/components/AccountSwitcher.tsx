@@ -1,31 +1,34 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { listMyAccounts, type Account } from "../api/accounts";
+import { useAccount } from "../context/AccountContext";
+import { useAuth } from "../context/AuthContext";
 
-// NOTE: this displays every account the user belongs to, but switching
-// selection here does not yet request a new account-scoped JWT — that
-// requires Auth <-> User/Tenant coordination that arrives with the
-// Billing/Credits slices, once there's real per-account data to scope to.
 export default function AccountSwitcher() {
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selected, setSelected] = useState<string>("");
-
-  useEffect(() => {
-    listMyAccounts()
-      .then((accs) => {
-        setAccounts(accs);
-        if (accs.length > 0) setSelected(accs[0].id);
-      })
-      .catch(() => undefined);
-  }, []);
+  const { claims, switchAccount } = useAuth();
+  const { accounts } = useAccount();
+  const [switching, setSwitching] = useState(false);
 
   if (accounts.length === 0) return null;
 
+  async function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const accountId = e.target.value;
+    if (accountId === claims?.account_id) return;
+    setSwitching(true);
+    try {
+      await switchAccount(accountId);
+    } catch {
+      // stay on the current account if the switch fails
+    } finally {
+      setSwitching(false);
+    }
+  }
+
   return (
     <select
-      value={selected}
-      onChange={(e) => setSelected(e.target.value)}
-      className="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm outline-none"
+      value={claims?.account_id ?? ""}
+      onChange={handleChange}
+      disabled={switching}
+      className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-sm outline-none disabled:opacity-50"
     >
       {accounts.map((a) => (
         <option key={a.id} value={a.id}>

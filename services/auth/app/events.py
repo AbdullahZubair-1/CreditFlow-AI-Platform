@@ -29,11 +29,16 @@ def _envelope(routing_key: str, data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def publish_user_registered(user_id: str, email: str) -> None:
+async def publish_user_registered(user_id: str, email: str, verification_token: str) -> None:
     channel = await get_channel()
     await publish_event(channel, EXCHANGE, "user.registered", _envelope("user.registered", {
         "user_id": user_id,
         "email": email,
+        # added for the Notification Service to build a working
+        # verification link — the spec calls for exactly this ("generate
+        # verification token, emit event for Notification Service to send
+        # the email"), which the event payload didn't carry until now.
+        "verification_token": verification_token,
     }))
 
 
@@ -44,11 +49,27 @@ async def publish_user_logged_in(user_id: str) -> None:
     }))
 
 
-async def publish_password_reset_requested(user_id: str, email: str) -> None:
+async def publish_user_deleted(user_id: str) -> None:
+    """User-Tenant consumes this to remove the user's AccountMember rows
+    across every account they belonged to — Auth owns identity, but
+    membership lives in a different service/schema entirely, so deleting
+    the User row here doesn't (and can't, via any FK) clean that up on
+    its own."""
+    channel = await get_channel()
+    await publish_event(channel, EXCHANGE, "user.deleted", _envelope("user.deleted", {"user_id": user_id}))
+
+
+async def publish_password_reset_requested(user_id: str, email: str, otp: str) -> None:
     channel = await get_channel()
     await publish_event(
         channel,
         EXCHANGE,
         "user.password_reset_requested",
-        _envelope("user.password_reset_requested", {"user_id": user_id, "email": email}),
+        _envelope(
+            "user.password_reset_requested",
+            # otp added so Notification can actually email it — without it,
+            # the OTP only ever reached the user via the dev-only response
+            # field, which is not "works end-to-end by email" per the spec.
+            {"user_id": user_id, "email": email, "otp": otp},
+        ),
     )

@@ -7,7 +7,7 @@ import aio_pika
 from sqlalchemy import select
 
 from app import stripe_client
-from app.config import settings
+from app.config import PRICE_ID_TO_PLAN, settings
 from app.db import async_session_factory
 from app.models import BillingAccount, Invoice, ProcessedEvent, Subscription, SubscriptionEvent
 from app.outbox import add_outbox_event
@@ -71,23 +71,81 @@ async def _handle_stripe_webhook(payload: dict[str, Any]) -> None:
     async with async_session_factory() as session:
         # Persist the raw webhook before any further processing, per the
         # reliability requirements — this is the durable write side of the
-        # flow, independent of the processed_events idempotency check.
+        # flow. It also doubles as this handler's real idempotency guard:
+        # since the insert below and every _apply_* side effect commit in
+        # this same transaction, "a SubscriptionEvent row for this
+        # stripe_event_id already exists" reliably means "everything that
+        # was ever going to happen for this event already happened,
+        # atomically" — so redelivery after a crash between this
+        # transaction committing and the outer processed_events row
+        # committing (the exact gap a forced-restart test probes) safely
+        # no-ops here instead of re-extending a dunning grace period or
+        # double-emitting payment.failed/subscription.updated.
         existing = await session.scalar(
             select(SubscriptionEvent).where(SubscriptionEvent.stripe_event_id == stripe_event_id)
         )
-        if not existing:
-            session.add(
-                SubscriptionEvent(stripe_event_id=stripe_event_id, event_type=event_type, raw_payload=event)
-            )
+        if existing:
+            return
+
+        session.add(SubscriptionEvent(stripe_event_id=stripe_event_id, event_type=event_type, raw_payload=event))
 
         if event_type == "invoice.paid":
             await _apply_invoice_paid(session, obj)
         elif event_type == "invoice.payment_failed":
             await _apply_payment_failed(session, obj)
-        elif event_type == "customer.subscription.updated":
+        elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
             await _apply_subscription_updated(session, obj)
+        elif event_type == "checkout.session.completed":
+            await _apply_checkout_session_completed(session, obj)
 
         await session.commit()
+
+
+def _price_id_from_invoice_line(line: dict[str, Any]) -> str | None:
+    """Stripe has shipped at least two different shapes for where an
+    invoice line item's Price id lives: the classic `line.price.id` /
+    `line.plan.id`, and the newer Invoice Rendering API's nested
+    `line.pricing.price_details.price` (a bare id string, not an object).
+    A live webhook against a real Stripe account came back in the newer
+    shape, which neither of the old lookups matched — silently returning
+    None here and falling all the way back to the (possibly stale)
+    Subscription.plan_tier, which is exactly the race this function exists
+    to avoid. Checking all three keeps this correct regardless of which
+    shape a given Stripe API version/account returns."""
+    price = line.get("price") or line.get("plan") or {}
+    price_id = price.get("id") if isinstance(price, dict) else None
+    if price_id:
+        return price_id
+    return line.get("pricing", {}).get("price_details", {}).get("price")
+
+
+def _plan_tier_from_invoice_lines(invoice_obj: dict[str, Any]) -> str | None:
+    """Reads the plan directly off the invoice's own line items (each
+    carries the Stripe Price actually billed) instead of trusting the
+    Subscription row's cached plan_tier — Stripe doesn't guarantee that
+    customer.subscription.created/updated (which is what sets that cache,
+    see _apply_subscription_updated) arrives before invoice.paid for the
+    same checkout. Reading it wrong here silently granted zero credits
+    for a real, paid Pro/Team invoice whenever the subscription event
+    happened to process second.
+
+    A plan switch invoiced via proration_behavior="always_invoice" (see
+    stripe_client.modify_subscription) always carries *multiple* line
+    items — a negative "unused time" credit for the plan being left, and
+    a positive "remaining time" charge for the plan being adopted — and
+    Stripe orders the old plan's credit line first. Blindly reading
+    lines[0] therefore picked the plan being switched *away from*: a real
+    Pro -> Team upgrade granted Team's credits to the invoice that
+    actually billed Pro, and vice versa on a downgrade. Preferring a
+    positive-amount line (a real charge, not a credit for time given up)
+    reliably identifies the plan actually being paid for."""
+    lines = invoice_obj.get("lines", {}).get("data", [])
+    if not lines:
+        return None
+
+    positive_lines = [line for line in lines if line.get("amount", 0) > 0] or lines
+    best_line = max(positive_lines, key=lambda line: line.get("amount", 0))
+    return PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(best_line))
 
 
 async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
@@ -116,7 +174,59 @@ async def _apply_invoice_paid(session, invoice_obj: dict[str, Any]) -> None:
         subscription.status = "active"
         subscription.grace_period_ends_at = None
 
-    add_outbox_event(session, "invoice.paid", {"account_id": str(account_id), "invoice_id": invoice_obj["id"]})
+    # Prefer the plan read directly off this invoice's own line items;
+    # only fall back to the (possibly not-yet-updated) Subscription row's
+    # cached plan_tier if the invoice itself doesn't carry a recognized
+    # Stripe Price (e.g. some non-subscription invoice types).
+    plan_tier = _plan_tier_from_invoice_lines(invoice_obj) or (subscription.plan_tier if subscription else "free")
+
+    add_outbox_event(
+        session,
+        "invoice.paid",
+        {
+            "account_id": str(account_id),
+            "invoice_id": invoice_obj["id"],
+            "amount_cents": invoice_obj["amount_paid"],
+            # the Credits Service maps plan_tier -> credits granted
+            "plan_tier": plan_tier,
+        },
+    )
+
+
+async def _apply_checkout_session_completed(session, checkout_obj: dict[str, Any]) -> None:
+    """Subscription checkouts settle via invoice.paid instead; the
+    checkout.session.completed events we act on here are one-time
+    purchases (see stripe_client.create_one_time_checkout_session) that
+    carry no invoice and must be translated into a domain event of their
+    own for the Credits Service to consume."""
+    metadata = checkout_obj.get("metadata") or {}
+    purpose = metadata.get("purpose")
+
+    if purpose == "marketplace_purchase":
+        add_outbox_event(
+            session,
+            "marketplace.payment_completed",
+            {
+                "listing_id": metadata["listing_id"],
+                "buyer_account_id": metadata["buyer_account_id"],
+                "seller_account_id": metadata["seller_account_id"],
+                "amount_cents": checkout_obj["amount_total"],
+            },
+        )
+    elif purpose == "credit_purchase":
+        add_outbox_event(
+            session,
+            "credits.purchase_completed",
+            {
+                "account_id": metadata["account_id"],
+                "credits_amount": int(metadata["credits_amount"]),
+                # Stripe's checkout session id doubles as Credits' own
+                # idempotency key for this grant (see its
+                # _handle_credit_purchase_completed) — redelivery of this
+                # same webhook event can't double-grant credits.
+                "checkout_session_id": checkout_obj["id"],
+            },
+        )
 
 
 async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:
@@ -141,6 +251,16 @@ async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:
 
 
 async def _apply_subscription_updated(session, subscription_obj: dict[str, Any]) -> None:
+    """Handles both customer.subscription.created (a brand-new checkout)
+    and customer.subscription.updated (a plan change via a Stripe-side
+    action, e.g. the customer portal) — either way, the source of truth
+    for which plan is actually active is the Stripe Price attached to the
+    subscription's line item, not anything CreditFlow's own /subscription
+    PATCH endpoint may or may not have set. Without this, a brand-new
+    subscription's plan_tier stayed "free" forever: nothing else in this
+    webhook flow ever wrote it, since customer.subscription.created wasn't
+    even routed here until now, and this handler previously only touched
+    status, never plan_tier."""
     account_id = await _account_id_for_customer(session, subscription_obj["customer"])
     if account_id is None:
         return
@@ -152,10 +272,19 @@ async def _apply_subscription_updated(session, subscription_obj: dict[str, Any])
     subscription.stripe_subscription_id = subscription_obj["id"]
     subscription.status = subscription_obj["status"]
 
+    items = subscription_obj.get("items", {}).get("data", [])
+    plan_tier = PRICE_ID_TO_PLAN.get(_price_id_from_invoice_line(items[0])) if items else None
+    if plan_tier:
+        subscription.plan_tier = plan_tier
+
     add_outbox_event(
         session,
         "subscription.updated",
-        {"account_id": str(account_id), "status": subscription_obj["status"]},
+        {
+            "account_id": str(account_id),
+            "status": subscription_obj["status"],
+            "plan_tier": subscription.plan_tier,
+        },
     )
 
 
@@ -172,8 +301,12 @@ async def start_consumers() -> None:
     account_queue = await declare_durable_queue_with_dlx(
         channel, DOMAIN_EVENTS_EXCHANGE, ACCOUNT_QUEUE, routing_keys=["account.created"]
     )
+    # "#" (not "*") because Stripe event types are themselves dot-separated
+    # (e.g. "invoice.paid", "checkout.session.completed"), so the relayed
+    # routing key "billing.<type>" can have more than two segments — "*"
+    # only matches exactly one word and would silently miss those.
     webhook_queue = await declare_durable_queue_with_dlx(
-        channel, WEBHOOK_EVENTS_EXCHANGE, WEBHOOK_QUEUE, routing_keys=["billing.*"]
+        channel, WEBHOOK_EVENTS_EXCHANGE, WEBHOOK_QUEUE, routing_keys=["billing.#"]
     )
 
     await consume(channel, account_queue, DOMAIN_EVENTS_EXCHANGE, _handle_account_created, _is_processed, _mark_processed)

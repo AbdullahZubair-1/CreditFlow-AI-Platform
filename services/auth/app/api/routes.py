@@ -1,32 +1,81 @@
+import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Request
+import httpx
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
-from app import events, redis_client, security
+from app import events, redis_client, security, user_tenant_client
 from app.config import settings
 from app.db import get_session
+from app.identity import Identity, require_identity
 from app.models import Credential, EmailVerificationToken, PasswordResetToken, RefreshToken, User
 from app.schemas import (
+    DeleteAccountRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
     LogoutRequest,
+    ProfileResponse,
     RefreshRequest,
     ResetPasswordRequest,
     SignupRequest,
     SignupResponse,
+    SwitchAccountRequest,
     TokenPairResponse,
+    UpdateProfileRequest,
     VerifyEmailRequest,
 )
 from py_shared.errors import ApiError
 from py_shared.jwt import decode_token, issue_access_token, issue_refresh_token
 
 router = APIRouter()
+logger = logging.getLogger("auth.api")
 
 EMAIL_VERIFICATION_TTL = timedelta(hours=24)
+
+
+async def _resolve_default_account(user_id: str) -> tuple[str, str]:
+    """Picks the first account User/Tenant returns for this user (its own
+    /internal/users/{id}/accounts orders by account creation time, so
+    this is the user's individual account on their very first login).
+    Falls back to the old Slice-1 placeholder (account_id == user_id,
+    role owner) if User/Tenant is unreachable or hasn't yet consumed
+    user.registered — a brief, rare race right after signup, since event
+    delivery is normally sub-second."""
+    try:
+        accounts = await user_tenant_client.list_user_accounts(user_id)
+    except httpx.HTTPError:
+        logger.exception("could not resolve accounts for user %s, using placeholder", user_id)
+        return user_id, "owner"
+
+    if not accounts:
+        logger.warning("user %s has no accounts yet (registration event not yet consumed?), using placeholder", user_id)
+        return user_id, "owner"
+
+    return accounts[0]["account_id"], accounts[0]["role"]
+
+
+async def _resolve_requested_account(user_id: str, requested_account_id: str) -> tuple[str, str]:
+    """Validates that user_id is actually a member of requested_account_id
+    and returns (account_id, role) for it; falls back to the default
+    account if not (e.g. they were removed from a team since their last
+    token was issued)."""
+    try:
+        accounts = await user_tenant_client.list_user_accounts(user_id)
+    except httpx.HTTPError:
+        logger.exception("could not resolve accounts for user %s, using placeholder", user_id)
+        return user_id, "owner"
+
+    for account in accounts:
+        if account["account_id"] == requested_account_id:
+            return account["account_id"], account["role"]
+
+    if accounts:
+        return accounts[0]["account_id"], accounts[0]["role"]
+    return user_id, "owner"
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=201)
@@ -51,9 +100,14 @@ async def signup(body: SignupRequest, session: AsyncSession = Depends(get_sessio
     session.add(verification)
     await session.commit()
 
-    await events.publish_user_registered(str(user.id), user.email)
+    await events.publish_user_registered(str(user.id), user.email, token)
 
-    return SignupResponse(user_id=str(user.id), email=user.email, dev_verification_token=token)
+    # token is deliberately NOT returned here — Notification actually
+    # emails the verification link now (same fix already applied to the
+    # forgot-password OTP). Returning it in the API response would let
+    # anyone skip email verification entirely for any signup, without
+    # ever touching the inbox that "verifies" they own it.
+    return SignupResponse(user_id=str(user.id), email=user.email)
 
 
 @router.post("/verify-email", status_code=204)
@@ -86,15 +140,10 @@ async def login(
     if not user or not credential or not security.verify_password(body.password, credential.password_hash):
         raise ApiError("invalid_credentials", "Incorrect email or password.", 401)
 
-    # account_id/role are owned by the User/Tenant service; the Gateway
-    # composes them in on first login in later slices. For this slice we
-    # use the user_id as a placeholder individual-account scope so the
-    # token shape is already correct end-to-end.
-    account_id = str(user.id)
-    role = "owner"
+    account_id, role = await _resolve_default_account(str(user.id))
 
-    access_token, claims = issue_access_token(str(user.id), account_id, role)
-    await redis_client.store_jti(claims.jti, str(user.id))
+    access_token, claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
+    await redis_client.store_jti(claims.jti, str(user.id), account_id)
 
     refresh_token, refresh_jti = issue_refresh_token(str(user.id))
     session.add(
@@ -135,11 +184,13 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     record.revoked = True
 
     user = await session.get(User, record.user_id)
-    account_id = str(user.id)
-    role = "owner"
+    if body.account_id:
+        account_id, role = await _resolve_requested_account(str(user.id), body.account_id)
+    else:
+        account_id, role = await _resolve_default_account(str(user.id))
 
-    access_token, access_claims = issue_access_token(str(user.id), account_id, role)
-    await redis_client.store_jti(access_claims.jti, str(user.id))
+    access_token, access_claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)
+    await redis_client.store_jti(access_claims.jti, str(user.id), account_id)
 
     new_refresh_token, new_refresh_jti = issue_refresh_token(str(user.id))
     session.add(
@@ -152,6 +203,110 @@ async def refresh(body: RefreshRequest, session: AsyncSession = Depends(get_sess
     await session.commit()
 
     return TokenPairResponse(access_token=access_token, refresh_token=new_refresh_token)
+
+
+@router.post("/switch-account", response_model=TokenPairResponse)
+async def switch_account(body: SwitchAccountRequest, session: AsyncSession = Depends(get_session)) -> TokenPairResponse:
+    """Backs the frontend's Account Switcher — issues a new account-scoped
+    JWT for a different account the caller belongs to, per the spec
+    ("Account Switcher... triggers a new account-scoped JWT"). Requires a
+    currently valid, non-revoked access token (same bar as any protected
+    Gateway route) rather than weakening the revocation guarantee to let
+    an expired or logged-out token switch accounts."""
+    try:
+        claims = decode_token(body.access_token)
+    except Exception as exc:  # noqa: BLE001
+        raise ApiError("invalid_token", "Access token is invalid or expired.", 401) from exc
+
+    if not await redis_client.is_jti_active(claims["jti"]):
+        raise ApiError("invalid_token", "Access token has been revoked.", 401)
+
+    user = await session.get(User, uuid.UUID(claims["user_id"]))
+    if not user:
+        raise ApiError("invalid_token", "Access token is invalid.", 400)
+
+    accounts = await user_tenant_client.list_user_accounts(str(user.id))
+    match = next((a for a in accounts if a["account_id"] == body.account_id), None)
+    if not match:
+        raise ApiError("forbidden", "You are not a member of this account.", 403)
+
+    access_token, access_claims = issue_access_token(
+        str(user.id), match["account_id"], match["role"], user.is_platform_admin
+    )
+    await redis_client.store_jti(access_claims.jti, str(user.id), match["account_id"])
+
+    refresh_token, refresh_jti = issue_refresh_token(str(user.id))
+    session.add(
+        RefreshToken(
+            user_id=user.id,
+            jti=refresh_jti,
+            expires_at=datetime.now(UTC) + timedelta(seconds=30 * 24 * 60 * 60),
+        )
+    )
+    await session.commit()
+
+    return TokenPairResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@router.get("/profile", response_model=ProfileResponse)
+async def get_profile(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> ProfileResponse:
+    user = await session.get(User, uuid.UUID(identity.user_id))
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+    return ProfileResponse(user_id=str(user.id), email=user.email, name=user.name, email_verified=user.email_verified)
+
+
+@router.patch("/profile", response_model=ProfileResponse)
+async def update_profile(
+    body: UpdateProfileRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> ProfileResponse:
+    user = await session.get(User, uuid.UUID(identity.user_id))
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+
+    user.name = body.name.strip()
+    await session.commit()
+
+    return ProfileResponse(user_id=str(user.id), email=user.email, name=user.name, email_verified=user.email_verified)
+
+
+@router.delete("/account", status_code=204)
+async def delete_account(
+    body: DeleteAccountRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    """Real, irreversible self-service account deletion. Requires
+    re-entering the password as the actual safety gate (a frontend
+    type-to-confirm dialog is a UX speed bump, not a security control on
+    its own). Deletes the User row — Credential/RefreshToken/
+    EmailVerificationToken/PasswordResetToken all cascade via
+    ON DELETE CASCADE — then publishes user.deleted so User/Tenant can
+    remove this user's memberships across every account, and revokes
+    every active session via Redis so any already-issued access token
+    stops working immediately rather than lingering until it expires."""
+    user_id = uuid.UUID(identity.user_id)
+    user = await session.get(User, user_id)
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+
+    credential = await session.scalar(select(Credential).where(Credential.user_id == user_id))
+    if not credential or not security.verify_password(body.password, credential.password_hash):
+        raise ApiError("invalid_credentials", "Incorrect password.", 401)
+
+    active_jtis = await redis_client.list_active_jtis_for_user(str(user_id))
+
+    await session.delete(user)
+    await session.commit()
+
+    for jti in active_jtis:
+        await redis_client.revoke_jti(jti)
+
+    await events.publish_user_deleted(str(user_id))
 
 
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
@@ -173,9 +328,13 @@ async def forgot_password(
     )
     await session.commit()
 
-    await events.publish_password_reset_requested(str(user.id), user.email)
+    await events.publish_password_reset_requested(str(user.id), user.email, otp)
 
-    return ForgotPasswordResponse(dev_otp=otp)
+    # otp is deliberately NOT returned here now that Notification actually
+    # emails it (see events.publish_password_reset_requested) — returning
+    # it in the API response would let anyone reset any account's password
+    # just by knowing their email, without ever touching their inbox.
+    return ForgotPasswordResponse()
 
 
 @router.post("/reset-password", status_code=204)
@@ -200,3 +359,23 @@ async def reset_password(body: ResetPasswordRequest, session: AsyncSession = Dep
     credential = await session.scalar(select(Credential).where(Credential.user_id == user.id))
     credential.password_hash = security.hash_password(body.new_password)
     await session.commit()
+
+
+@router.get("/internal/users/{user_id}")
+async def internal_get_user(user_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes (see _reject_internal_paths in
+    services/gateway/app/api/routes.py) so this is unreachable from the
+    public internet. Used by the Notification Service to resolve an email
+    address from a user_id carried in an event payload, and by the Admin
+    Service to show an account owner's email/signup/verification status
+    in the SuperAdmin console."""
+    user = await session.get(User, user_id)
+    if not user:
+        raise ApiError("not_found", "User not found.", 404)
+    return {
+        "user_id": str(user.id),
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "created_at": user.created_at.isoformat(),
+    }

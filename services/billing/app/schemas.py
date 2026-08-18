@@ -19,6 +19,25 @@ class CheckoutSessionResponse(BaseModel):
     checkout_url: str
 
 
+class OneTimeCheckoutRequest(BaseModel):
+    amount_cents: int
+    currency: str = "usd"
+    description: str
+    metadata: dict[str, str] = {}
+    success_url: str
+    cancel_url: str
+
+
+class DirectCreditPurchaseRequest(BaseModel):
+    credits_amount: int
+    success_url: str
+    cancel_url: str
+
+
+class CreditsPricingResponse(BaseModel):
+    cents_per_credit: int
+
+
 class UpdateSubscriptionRequest(BaseModel):
     plan: str
 
@@ -36,6 +55,7 @@ class InvoiceResponse(BaseModel):
     currency: str
     status: str
     created_at: datetime
+    refunded_amount_cents: int | None = None
 
 
 class RefundRequest(BaseModel):

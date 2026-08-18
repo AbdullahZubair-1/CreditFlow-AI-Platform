@@ -9,7 +9,6 @@ export default function ForgotPassword() {
   const [step, setStep] = useState<"request" | "reset">("request");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
-  const [devOtp, setDevOtp] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -18,10 +17,7 @@ export default function ForgotPassword() {
     e.preventDefault();
     setError(null);
     try {
-      const res = await forgotPassword(email);
-      // Dev-only: the Notification Service (a later slice) will email this
-      // OTP instead of returning it directly in the response.
-      setDevOtp(res.dev_otp ?? null);
+      await forgotPassword(email);
       setStep("reset");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -40,7 +36,7 @@ export default function ForgotPassword() {
   }
 
   const inputClass =
-    "w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
+    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
 
   if (step === "request") {
     return (
@@ -54,7 +50,7 @@ export default function ForgotPassword() {
             onChange={(e) => setEmail(e.target.value)}
             className={inputClass}
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
           <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
             Send code
           </button>
@@ -65,12 +61,9 @@ export default function ForgotPassword() {
 
   return (
     <AuthLayout title="Reset password">
-      {devOtp && (
-        <p className="mb-4 text-sm text-slate-400">
-          A one-time code would normally be emailed to you. For now, your code is: <br />
-          <span className="font-mono text-indigo-400">{devOtp}</span>
-        </p>
-      )}
+      <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+        We emailed a one-time code to <span className="font-medium">{email}</span>. Enter it below.
+      </p>
       <form onSubmit={handleReset} className="space-y-4">
         <input
           required
@@ -88,7 +81,7 @@ export default function ForgotPassword() {
           onChange={(e) => setNewPassword(e.target.value)}
           className={inputClass}
         />
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
         <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
           Reset password
         </button>

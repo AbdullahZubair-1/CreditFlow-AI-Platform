@@ -2,10 +2,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import events
+from app import clients, events
 from app.config import settings
 from app.db import get_session
 from app.identity import Identity, require_identity
@@ -49,9 +49,27 @@ async def list_my_accounts(
         .join(AccountMember, AccountMember.account_id == Account.id)
         .where(AccountMember.user_id == uuid.UUID(identity.user_id))
     )
+    accounts = rows.all()
+    if not accounts:
+        return []
+
+    count_rows = await session.execute(
+        select(AccountMember.account_id, func.count())
+        .where(AccountMember.account_id.in_([a.id for a, _ in accounts]))
+        .group_by(AccountMember.account_id)
+    )
+    counts = dict(count_rows.all())
+
     return [
-        AccountResponse(id=str(a.id), type=a.type, name=a.name, plan_tier=a.plan_tier, role=role)
-        for a, role in rows.all()
+        AccountResponse(
+            id=str(a.id),
+            type=a.type,
+            name=a.name,
+            plan_tier=a.plan_tier,
+            role=role,
+            member_count=counts.get(a.id, 1),
+        )
+        for a, role in accounts
     ]
 
 
@@ -87,6 +105,10 @@ async def invite_member(
     if member.role not in MANAGE_ROLES:
         raise ApiError("forbidden", "Only owners/admins can invite members.", 403)
 
+    account = await session.get(Account, account_id)
+    if not account or account.plan_tier != "team":
+        raise ApiError("team_plan_required", "Inviting team members requires the Team plan.", 403)
+
     token = uuid.uuid4().hex
     invite = Invite(
         account_id=account_id,
@@ -98,7 +120,14 @@ async def invite_member(
     session.add(invite)
     await session.commit()
 
-    return InviteResponse(invite_id=str(invite.id), dev_invite_token=token)
+    await events.publish_invite_created(str(invite.id), str(account_id), body.email, token, body.role)
+
+    # token is deliberately NOT returned here — Notification actually
+    # emails the invite link now. Returning it in the API response would
+    # let the inviter (or anyone reading the response) hand out working
+    # invite links without the invitee's email ever being involved at
+    # all, defeating the point of inviting a specific person.
+    return InviteResponse(invite_id=str(invite.id))
 
 
 @router.post("/invites/{token}/accept", response_model=AcceptInviteResponse)
@@ -111,7 +140,42 @@ async def accept_invite(
     if not invite or invite.status != "pending" or invite.expires_at < datetime.now(UTC):
         raise ApiError("invalid_invite", "Invite is invalid, expired, or already used.", 400)
 
-    invite.status = "accepted"
+    # An invite link carries no identity of its own — whoever is logged in
+    # when they click it is who accept_invite used to add, regardless of
+    # whether that's actually the person the invite named. Confirming the
+    # currently-authenticated user's real email (via Auth, since this
+    # service owns membership but not identity) matches the invite's
+    # target email is what actually enforces "this invite is for a
+    # specific person," not just a bearer-token-style link anyone could
+    # forward or reuse.
+    accepting_email = await clients.get_user_email(identity.user_id)
+    if not accepting_email or accepting_email.lower() != invite.email.lower():
+        raise ApiError(
+            "invite_email_mismatch",
+            f"This invite was sent to {invite.email}. Log in as that email to accept it.",
+            403,
+        )
+
+    existing = await session.scalar(
+        select(AccountMember).where(
+            AccountMember.account_id == invite.account_id, AccountMember.user_id == uuid.UUID(identity.user_id)
+        )
+    )
+    if existing:
+        raise ApiError("already_member", "You're already a member of this account.", 409)
+
+    # Atomic claim: the UPDATE...WHERE status='pending' (not a plain read
+    # then separate write) is what actually prevents two concurrent accept
+    # attempts on the same token from both passing the "is pending" check
+    # above and then racing on the AccountMember insert — a real failure
+    # mode, not hypothetical, since nothing about an emailed link stops it
+    # from being opened/submitted more than once.
+    result = await session.execute(
+        update(Invite).where(Invite.id == invite.id, Invite.status == "pending").values(status="accepted")
+    )
+    if result.rowcount == 0:
+        raise ApiError("invalid_invite", "Invite is invalid, expired, or already used.", 400)
+
     session.add(
         AccountMember(account_id=invite.account_id, user_id=uuid.UUID(identity.user_id), role=invite.role)
     )
@@ -170,3 +234,71 @@ async def remove_member(
     target = await _require_membership(session, account_id, user_id)
     await session.delete(target)
     await session.commit()
+
+
+@router.get("/internal/users/{user_id}/accounts")
+async def internal_list_user_accounts(user_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Used by Auth to pick a default
+    account_id/role to scope a JWT to at login (and to validate an
+    account-switch request), since Auth owns identity but not
+    account/membership data."""
+    rows = await session.execute(
+        select(Account, AccountMember.role)
+        .join(AccountMember, AccountMember.account_id == Account.id)
+        .where(AccountMember.user_id == user_id)
+        .order_by(Account.created_at)
+    )
+    return [
+        {"account_id": str(a.id), "role": role, "type": a.type, "name": a.name} for a, role in rows.all()
+    ]
+
+
+@router.get("/internal/accounts")
+async def internal_list_accounts(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only (see the /internal/* note on the owner
+    lookup below) — backs the Admin/Ops Service's SuperAdmin-only
+    cross-account directory."""
+    rows = await session.scalars(select(Account))
+    return [
+        {"account_id": str(a.id), "name": a.name, "type": a.type, "plan_tier": a.plan_tier}
+        for a in rows.all()
+    ]
+
+
+@router.get("/internal/accounts/{account_id}/summary")
+async def internal_get_account_summary(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — backs the Admin/Ops Service's per-account
+    overview (name/type/plan_tier/member_count), one of the "read-only
+    calls" the spec describes pulling from User/Tenant, Billing, Credits,
+    and Usage."""
+    account = await session.get(Account, account_id)
+    if not account:
+        raise ApiError("not_found", "Account not found.", 404)
+
+    member_count = await session.scalar(
+        select(func.count()).select_from(AccountMember).where(AccountMember.account_id == account_id)
+    )
+    return {
+        "account_id": str(account_id),
+        "name": account.name,
+        "type": account.type,
+        "plan_tier": account.plan_tier,
+        "member_count": member_count,
+    }
+
+
+@router.get("/internal/accounts/{account_id}/owner")
+async def internal_get_account_owner(account_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes (see _reject_internal_paths in
+    services/gateway/app/api/routes.py) so this is unreachable from the
+    public internet. Used by the Notification Service to find who to
+    email for account-level events (invoice.paid, usage.threshold_reached,
+    etc.) that carry only an account_id, not a user_id."""
+    owner = await session.scalar(
+        select(AccountMember).where(AccountMember.account_id == account_id, AccountMember.role == "owner")
+    )
+    if not owner:
+        raise ApiError("not_found", "No owner found for this account.", 404)
+    return {"account_id": str(account_id), "user_id": str(owner.user_id)}

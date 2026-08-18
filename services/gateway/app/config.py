@@ -7,6 +7,14 @@ class Settings(BaseSettings):
     auth_service_url: str = "http://auth:8000"
     user_tenant_service_url: str = "http://user-tenant:8000"
     billing_service_url: str = "http://billing:8000"
+    credits_service_url: str = "http://credits:8000"
+    usage_service_url: str = "http://usage:8000"
+    ai_generation_service_url: str = "http://ai-generation:8000"
+    content_service_url: str = "http://content:8000"
+    scheduler_service_url: str = "http://scheduler:8000"
+    social_publishing_service_url: str = "http://social-publishing:8000"
+    scraper_service_url: str = "http://scraper:8000"
+    admin_service_url: str = "http://admin:8000"
 
     rate_limit_per_ip_per_minute: int = 120
     rate_limit_per_account_per_minute: int = 300

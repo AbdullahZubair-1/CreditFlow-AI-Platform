@@ -1,0 +1,20 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+aio-pika>=9.4.0
+httpx>=0.27.0
+motor>=3.5.0
+# Pinned exactly (not >=) to match the Dockerfile's base image tag
+# (mcr.microsoft.com/playwright/python:v1.45.0-jammy), which ships Chromium
+# pre-installed for that specific Playwright release. An open-ended pin let
+# `pip install` grab a newer playwright package than the browser binaries
+# baked into the image, and the two are version-coupled by an internal
+# revision id — every real crawl failed with "BrowserType.launch:
+# Executable doesn't exist at .../chromium_headless_shell-1234/..." because
+# the newer Python package was looking for a browser revision the image
+# never downloaded. Bumping this requires bumping the Dockerfile's base
+# image tag to match, in lockstep.
+playwright==1.45.0
+# py-shared is installed separately (see Dockerfile / local dev docs):
+#   pip install -e ../../libs/py-shared

@@ -1,13 +1,15 @@
 import { apiFetch } from "./client";
 
+// refresh_token is intentionally absent here — the Gateway strips it out
+// of every response and sets it as an httpOnly cookie instead (see
+// services/gateway/app/cookie_auth.py), so it never reaches frontend JS.
 export interface TokenPair {
   access_token: string;
-  refresh_token: string;
   token_type: string;
 }
 
 export function signup(email: string, password: string) {
-  return apiFetch<{ user_id: string; email: string; dev_verification_token?: string }>("/auth/signup", {
+  return apiFetch<{ user_id: string; email: string }>("/auth/signup", {
     method: "POST",
     body: { email, password },
     auth: false,
@@ -39,7 +41,7 @@ export function verifyEmail(token: string) {
 }
 
 export function forgotPassword(email: string) {
-  return apiFetch<{ dev_otp?: string }>("/auth/forgot-password", {
+  return apiFetch<void>("/auth/forgot-password", {
     method: "POST",
     body: { email },
     auth: false,
@@ -50,6 +52,14 @@ export function resetPassword(email: string, otp: string, newPassword: string) {
   return apiFetch<void>("/auth/reset-password", {
     method: "POST",
     body: { email, otp, new_password: newPassword },
+    auth: false,
+  });
+}
+
+export function switchAccount(accessToken: string, accountId: string) {
+  return apiFetch<TokenPair>("/auth/switch-account", {
+    method: "POST",
+    body: { access_token: accessToken, account_id: accountId },
     auth: false,
   });
 }

@@ -9,6 +9,7 @@ class AccountResponse(BaseModel):
     name: str
     plan_tier: str
     role: str
+    member_count: int = 1
 
 
 class CreateTeamAccountRequest(BaseModel):
@@ -22,7 +23,6 @@ class InviteRequest(BaseModel):
 
 class InviteResponse(BaseModel):
     invite_id: str
-    dev_invite_token: str
 
 
 class AcceptInviteResponse(BaseModel):

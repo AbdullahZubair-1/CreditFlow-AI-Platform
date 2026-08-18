@@ -10,6 +10,9 @@ Conventions enforced here (per the platform spec):
 """
 from __future__ import annotations
 
+import asyncio
+import datetime
+import decimal
 import json
 import logging
 import os
@@ -21,7 +24,37 @@ from aio_pika.abc import AbstractIncomingMessage
 
 logger = logging.getLogger("py_shared.rabbitmq")
 
+
+def _json_default(value: Any) -> Any:
+    """Handles the handful of common Python types that aren't natively
+    JSON-serializable but show up regularly in event payloads sourced from
+    third-party SDKs — Stripe's Event objects in particular return several
+    numeric fields (tax amounts, exchange rates) as decimal.Decimal rather
+    than float or int, which crashed publish_event with a bare
+    `TypeError: Object of type Decimal is not JSON serializable` on every
+    Stripe webhook carrying one of those fields, even after converting the
+    outer Event object itself to a plain dict."""
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, (datetime.datetime, datetime.date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
 MAX_RETRIES = 5
+CONNECT_MAX_ATTEMPTS = 10
+CONNECT_INITIAL_DELAY_SECONDS = 1.0
+CONNECT_MAX_DELAY_SECONDS = 30.0
+
+# Retry backoff for failed message handlers (distinct from CONNECT_* above,
+# which only governs the initial broker connection). The spec calls out
+# LinkedIn publish failures specifically needing "retry with backoff" for
+# transient errors (rate limits, momentary 5xxs) — retrying immediately in
+# a tight loop just re-hits the same rate limit or outage. Backoff is
+# applied by delaying the requeue itself rather than blocking the consumer
+# task, so a slow retry on one message doesn't stall unrelated messages
+# behind it in the same queue.
+RETRY_BACKOFF_BASE_SECONDS = 2.0
+RETRY_BACKOFF_MAX_SECONDS = 60.0
 
 
 def _amqp_url() -> str:
@@ -29,7 +62,41 @@ def _amqp_url() -> str:
 
 
 async def get_connection() -> aio_pika.RobustConnection:
-    return await aio_pika.connect_robust(_amqp_url())
+    """Retries the *initial* connection with exponential backoff.
+
+    Found in practice: a Docker healthcheck can report RabbitMQ "healthy"
+    microseconds before its AMQP listener actually accepts connections.
+    `connect_robust()` handles reconnection after a connection drops, but
+    a failure on the very first attempt raises immediately — and since
+    every caller here is a bare `asyncio.create_task(start_consumer())`
+    with no supervisor above it, that exception silently kills the
+    consumer task forever while the service's HTTP endpoints keep working
+    fine, with nothing in the logs to make it obvious short of grepping
+    for "Connection refused" at startup.
+    """
+    delay = CONNECT_INITIAL_DELAY_SECONDS
+    last_exc: Exception | None = None
+
+    for attempt in range(1, CONNECT_MAX_ATTEMPTS + 1):
+        try:
+            return await aio_pika.connect_robust(_amqp_url())
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt == CONNECT_MAX_ATTEMPTS:
+                break
+            logger.warning(
+                "RabbitMQ connection attempt %d/%d failed (%s), retrying in %.1fs",
+                attempt,
+                CONNECT_MAX_ATTEMPTS,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, CONNECT_MAX_DELAY_SECONDS)
+
+    raise ConnectionError(
+        f"Could not connect to RabbitMQ after {CONNECT_MAX_ATTEMPTS} attempts"
+    ) from last_exc
 
 
 async def publish_event(
@@ -40,7 +107,7 @@ async def publish_event(
 ) -> None:
     exchange = await channel.declare_exchange(exchange_name, ExchangeType.TOPIC, durable=True)
     message = Message(
-        body=json.dumps(payload).encode(),
+        body=json.dumps(payload, default=_json_default).encode(),
         delivery_mode=DeliveryMode.PERSISTENT,
         content_type="application/json",
     )
@@ -101,6 +168,25 @@ async def consume(
     processed_events table (unique constraint on event_id) so redelivery
     after a crash never double-applies an event.
 
+    IMPORTANT — what this actually guarantees, and what it doesn't:
+    `handler(payload)` runs, and only *after* it returns successfully does
+    `mark_processed(event_id)` run; only after *that* does this function's
+    `message.process()` context manager ack the message back to the
+    broker. That ordering means the processed_events check reliably
+    catches redelivery that happens *after* both of those have already
+    committed (e.g. the ack itself was lost in transit) — but it does
+    nothing for a crash that lands *between* handler's own commit and
+    mark_processed's commit (exactly what a "kill the container mid-burst"
+    reliability test will probe). In that window, is_processed() is still
+    False, so redelivery re-runs `handler` in full. Every handler passed
+    here therefore needs its own idempotency check against its own
+    schema (e.g. "does a row for this invoice_id/generation_job_id
+    already exist") — the processed_events table is necessary but not
+    sufficient on its own. Several handlers across this codebase were
+    missing that second check and got fixed during a dedicated reliability
+    pass; see each affected service's app/events.py for the specific
+    "why this check exists" comment.
+
     Native RabbitMQ x-death headers only populate once a message has
     already been dead-lettered once, so a plain reject(requeue=False) on
     first failure would skip straight to the DLQ with zero retries. Instead
@@ -129,12 +215,24 @@ async def consume(
                     await message.reject(requeue=False)
                     return
 
+                backoff_delay = min(
+                    RETRY_BACKOFF_BASE_SECONDS * (2 ** (retry_count - 1)),
+                    RETRY_BACKOFF_MAX_SECONDS,
+                )
                 logger.exception(
-                    "handler failed (attempt %d/%d), requeuing: %s",
+                    "handler failed (attempt %d/%d), requeuing in %.1fs: %s",
                     retry_count,
                     MAX_RETRIES,
+                    backoff_delay,
                     payload,
                 )
+                # No prefetch/QoS limit is configured on these channels, so
+                # aio_pika dispatches each incoming message to its own
+                # on_message task rather than serializing them — sleeping
+                # here only delays *this* message's retry and yields the
+                # event loop back to asyncio, it does not stall delivery or
+                # processing of any other in-flight message on the queue.
+                await asyncio.sleep(backoff_delay)
                 retry_message = Message(
                     body=message.body,
                     delivery_mode=DeliveryMode.PERSISTENT,

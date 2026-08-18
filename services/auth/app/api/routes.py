@@ -294,6 +294,13 @@ async def delete_account(
     if not user:
         raise ApiError("not_found", "User not found.", 404)
 
+    if user.is_platform_admin:
+        raise ApiError(
+            "superadmin_protected",
+            "SuperAdmin accounts cannot be deleted through self-service account deletion.",
+            403,
+        )
+
     credential = await session.scalar(select(Credential).where(Credential.user_id == user_id))
     if not credential or not security.verify_password(body.password, credential.password_hash):
         raise ApiError("invalid_credentials", "Incorrect password.", 401)

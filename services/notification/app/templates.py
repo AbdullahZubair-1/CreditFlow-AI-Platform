@@ -58,3 +58,34 @@ def usage_threshold_email(threshold: int, used_tokens: int, quota_tokens: int) -
         f"You've used {threshold}% of your usage quota",
         f"<p>Your account has used {used_tokens:,} of its {quota_tokens:,} token quota this period ({threshold}%).</p>",
     )
+
+
+def refund_issued_email(amount_cents: int) -> tuple[str, str]:
+    return (
+        "Your CreditFlow refund has been issued",
+        f"<p>We've refunded ${amount_cents / 100:.2f} to your original payment method — it should appear within "
+        "5-10 business days depending on your bank. Your plan has been switched to Free.</p>",
+    )
+
+
+def marketplace_purchase_email(amount_cents: int) -> tuple[str, str]:
+    return (
+        "Your marketplace credit purchase is complete",
+        f"<p>Your purchase of ${amount_cents / 100:.2f} on the credits marketplace is complete — "
+        "the credits have been added to your balance.</p>",
+    )
+
+
+def marketplace_sale_email(amount_cents: int) -> tuple[str, str]:
+    return (
+        "Your marketplace listing sold",
+        f"<p>Your credits marketplace listing sold for ${amount_cents / 100:.2f}. "
+        "The credits have been deducted from your balance and the sale is complete.</p>",
+    )
+
+
+def credits_purchased_email(credits_amount: int) -> tuple[str, str]:
+    return (
+        "Your credit purchase is complete",
+        f"<p>You've successfully purchased <b>{credits_amount:,} credits</b> — they've been added to your balance.</p>",
+    )

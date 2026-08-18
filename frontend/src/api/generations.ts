@@ -17,10 +17,10 @@ export function listModels() {
   return apiFetch<Record<string, string>>("/models");
 }
 
-export function createGeneration(prompt: string, model: string, purpose = "post") {
+export function createGeneration(prompt: string, model: string, purpose = "post", useWebResearch = false) {
   return apiFetch<{ job_id: string; status: string }>("/generations", {
     method: "POST",
-    body: { prompt, model, purpose },
+    body: { prompt, model, purpose, use_web_research: useWebResearch },
   });
 }
 

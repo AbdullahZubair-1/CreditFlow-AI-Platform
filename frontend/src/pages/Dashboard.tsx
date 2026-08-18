@@ -35,11 +35,11 @@ export default function Dashboard() {
         <h1 className="text-2xl font-semibold">Welcome</h1>
         <p className="mt-2 text-slate-500 dark:text-slate-400">
           Head to the{" "}
-          <Link to="/dashboard/content" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+          <Link to="/dashboard/content" className="text-brand-600 dark:text-brand-400 hover:underline">
             Content Studio
           </Link>{" "}
           to generate a post, or check the{" "}
-          <Link to="/dashboard/calendar" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+          <Link to="/dashboard/calendar" className="text-brand-600 dark:text-brand-400 hover:underline">
             calendar
           </Link>{" "}
           for what's scheduled.

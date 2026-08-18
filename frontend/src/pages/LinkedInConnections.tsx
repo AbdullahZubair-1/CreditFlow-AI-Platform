@@ -92,7 +92,7 @@ export default function LinkedInConnections() {
             <button
               onClick={handleConnect}
               disabled={connecting}
-              className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400 disabled:opacity-50"
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
             >
               {connecting ? "Redirecting..." : "Connect LinkedIn"}
             </button>

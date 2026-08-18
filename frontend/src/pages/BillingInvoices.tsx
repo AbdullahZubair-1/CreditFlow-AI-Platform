@@ -106,7 +106,7 @@ export default function BillingInvoices() {
             <div
               key={plan.tier}
               className={`rounded-lg border p-5 ${
-                isCurrent ? "border-indigo-500 bg-indigo-500/10" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
+                isCurrent ? "border-brand-500 bg-brand-500/10" : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900"
               }`}
             >
               <h3 className="text-lg font-semibold capitalize">{plan.tier}</h3>

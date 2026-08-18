@@ -79,10 +79,14 @@ IMAGE_PROMPT_SYSTEM_PROMPT = (
     "You'll receive the full text of a social media post. Pick the single most "
     "visually concrete example, moment, or detail actually mentioned in the text "
     "(not the post's abstract overall theme) and describe it as a specific scene "
-    "for an AI image generator. Avoid generic tech cliches — no robots, no glowing "
-    "circuit boards, no people typing on laptops in dark rooms unless the text "
-    "literally describes that. Respond with ONLY the image description itself "
-    "(10-25 words), no preamble, no quotes, no explanation."
+    "for an AI image generator. If a technology, product, or concept name has an "
+    "unrelated literal meaning (e.g. Python the programming language is not a "
+    "snake, Django the web framework is not the movie, a software Redis is not "
+    "the color red), depict what that thing actually does or represents in "
+    "context, never a literal reading of its name. Avoid generic tech cliches — "
+    "no robots, no glowing circuit boards, no people typing on laptops in dark "
+    "rooms unless the text literally describes that. Respond with ONLY the image "
+    "description itself (10-25 words), no preamble, no quotes, no explanation."
 )
 
 TITLE_SYSTEM_PROMPT = (

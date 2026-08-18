@@ -38,7 +38,7 @@ export default function VerifyEmail() {
       {status === "success" && (
         <div className="text-center">
           <p className="text-sm text-slate-600 dark:text-slate-300">Your email has been verified.</p>
-          <Link to="/login" className="mt-4 inline-block text-indigo-600 dark:text-indigo-400 hover:underline">
+          <Link to="/login" className="mt-4 inline-block text-brand-600 dark:text-brand-400 hover:underline">
             Continue to log in
           </Link>
         </div>

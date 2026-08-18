@@ -28,3 +28,13 @@ class ScrapedDocumentResponse(BaseModel):
     title: str
     text_content: str
     created_at: datetime
+
+
+class ResearchRequest(BaseModel):
+    query: str
+
+
+class ResearchResponse(BaseModel):
+    url: str
+    title: str
+    text_content: str

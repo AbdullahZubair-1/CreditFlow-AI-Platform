@@ -167,6 +167,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       USAGE_SERVICE_URL: http://usage:8000
+      SCRAPER_SERVICE_URL: http://scraper:8000
       GROQ_API_KEY: ${GROQ_API_KEY:-gsk_placeholder}
     depends_on:
       postgres:
@@ -176,6 +177,8 @@ services:
       rabbitmq:
         condition: service_healthy
       usage:
+        condition: service_started
+      scraper:
         condition: service_started
     ports:
       - "8006:8000"
@@ -305,8 +308,11 @@ services:
       AUTH_SERVICE_URL: http://auth:8000
       USER_TENANT_SERVICE_URL: http://user-tenant:8000
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:5173}
-      RESEND_API_KEY: ${RESEND_API_KEY:-re_placeholder}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-CreditFlow <onboarding@resend.dev>}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-smtp-placeholder@gmail.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-smtp-placeholder}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-CreditFlow <smtp-placeholder@gmail.com>}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
     depends_on:
       postgres:

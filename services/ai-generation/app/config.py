@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/"
     usage_service_url: str = "http://usage:8000"
+    scraper_service_url: str = "http://scraper:8000"
 
     # Placeholder — replace with a real key from
     # https://console.groq.com/keys before exercising generation

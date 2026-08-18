@@ -128,12 +128,64 @@ async def _handle_payment_failed(payload: dict[str, Any]) -> None:
     await slack_client.send_ops_alert(f"Payment failed for account {data['account_id']}")
 
 
+async def _handle_refund_issued(payload: dict[str, Any]) -> None:
+    data = payload["data"]
+    try:
+        email = await identity_resolver.resolve_owner_email(data["account_id"])
+    except ResolutionError:
+        logger.exception("could not resolve owner email for refund.issued, skipping notification")
+        return
+    subject, html = templates.refund_issued_email(data["amount_cents"])
+    await notify.send_and_log("refund.issued", email, subject, html, payload.get("event_id"))
+
+
+async def _handle_marketplace_payment_completed(payload: dict[str, Any]) -> None:
+    data = payload["data"]
+    event_id = payload.get("event_id")
+
+    try:
+        buyer_email = await identity_resolver.resolve_owner_email(data["buyer_account_id"])
+    except ResolutionError:
+        logger.exception("could not resolve buyer email for marketplace.payment_completed, skipping their notification")
+    else:
+        subject, html = templates.marketplace_purchase_email(data["amount_cents"])
+        # A distinct event_id per recipient keeps send_and_log's own
+        # idempotency check (keyed on source_event_id) from treating the
+        # seller's email as a duplicate of the buyer's, or vice versa.
+        await notify.send_and_log("marketplace.payment_completed.buyer", buyer_email, subject, html, f"{event_id}:buyer")
+
+    try:
+        seller_email = await identity_resolver.resolve_owner_email(data["seller_account_id"])
+    except ResolutionError:
+        logger.exception("could not resolve seller email for marketplace.payment_completed, skipping their notification")
+    else:
+        subject, html = templates.marketplace_sale_email(data["amount_cents"])
+        await notify.send_and_log("marketplace.payment_completed.seller", seller_email, subject, html, f"{event_id}:seller")
+
+
+async def _handle_credits_purchase_completed(payload: dict[str, Any]) -> None:
+    data = payload["data"]
+    try:
+        email = await identity_resolver.resolve_owner_email(data["account_id"])
+    except ResolutionError:
+        logger.exception("could not resolve owner email for credits.purchase_completed, skipping notification")
+        return
+    subject, html = templates.credits_purchased_email(data["credits_amount"])
+    await notify.send_and_log("credits.purchase_completed", email, subject, html, payload.get("event_id"))
+
+
 async def _route_billing_event(payload: dict[str, Any]) -> None:
     event_type = payload.get("event_type")
     if event_type == "invoice.paid":
         await _handle_invoice_paid(payload)
     elif event_type == "payment.failed":
         await _handle_payment_failed(payload)
+    elif event_type == "refund.issued":
+        await _handle_refund_issued(payload)
+    elif event_type == "marketplace.payment_completed":
+        await _handle_marketplace_payment_completed(payload)
+    elif event_type == "credits.purchase_completed":
+        await _handle_credits_purchase_completed(payload)
 
 
 # --- social_events ---
@@ -190,7 +242,16 @@ async def start_consumers() -> None:
         channel, USAGE_EVENTS_EXCHANGE, "notification.usage_events", routing_keys=["usage.threshold_reached"]
     )
     billing_queue = await declare_durable_queue_with_dlx(
-        channel, BILLING_EVENTS_EXCHANGE, "notification.billing_events", routing_keys=["invoice.paid", "payment.failed"]
+        channel,
+        BILLING_EVENTS_EXCHANGE,
+        "notification.billing_events",
+        routing_keys=[
+            "invoice.paid",
+            "payment.failed",
+            "refund.issued",
+            "marketplace.payment_completed",
+            "credits.purchase_completed",
+        ],
     )
     social_queue = await declare_durable_queue_with_dlx(
         channel, SOCIAL_EVENTS_EXCHANGE, "notification.social_events", routing_keys=["post.published", "post.failed"]

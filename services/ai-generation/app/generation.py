@@ -2,7 +2,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from app import events, groq_client, pubsub
+from app import events, groq_client, pubsub, scraper_client
 from app.db import async_session_factory
 from app.groq_client import GroqError
 from app.models import GenerationJob, PromptHistory
@@ -15,19 +15,43 @@ logger = logging.getLogger("ai_generation.generation")
 # and Credits' grant amounts. 1 cent per 100 tokens.
 CENTS_PER_100_TOKENS = 1
 
+# Keeps the augmented prompt from ballooning past what's reasonable to send
+# to Groq — a full scraped page can be tens of thousands of characters.
+RESEARCH_CONTEXT_MAX_CHARS = 3000
 
-async def run_generation(job_id: uuid.UUID, account_id: str, model_slug: str, prompt: str) -> None:
+
+async def _build_prompt_with_research(prompt: str) -> str:
+    """Best-effort: Scraper searches for and scrapes one page about the
+    prompt (no URL from the user) and the result is folded in as context
+    ahead of the actual instruction. A failed/empty search just falls back
+    to the original prompt unchanged rather than blocking generation."""
+    result = await scraper_client.research(prompt)
+    if not result or not result.get("text_content"):
+        return prompt
+
+    excerpt = result["text_content"][:RESEARCH_CONTEXT_MAX_CHARS]
+    return (
+        f"Use the following web research as factual context where it's relevant "
+        f"(source: {result['url']}):\n\n{excerpt}\n\n---\n\n{prompt}"
+    )
+
+
+async def run_generation(
+    job_id: uuid.UUID, account_id: str, model_slug: str, prompt: str, use_web_research: bool = False
+) -> None:
     async with async_session_factory() as session:
         job = await session.get(GenerationJob, job_id)
         job.status = "streaming"
         await session.commit()
+
+    effective_prompt = await _build_prompt_with_research(prompt) if use_web_research else prompt
 
     response_parts: list[str] = []
     prompt_tokens = completion_tokens = total_tokens = 0
     cancelled = False
 
     try:
-        async for chunk in groq_client.stream_completion(model_slug, prompt):
+        async for chunk in groq_client.stream_completion(model_slug, effective_prompt):
             if await pubsub.is_cancel_requested(str(job_id)):
                 cancelled = True
                 break

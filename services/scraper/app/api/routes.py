@@ -4,9 +4,16 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 
 from app import events, mongo
+from app import search as search_module
 from app.config import RECURRENCE_INTERVALS_SECONDS
 from app.identity import Identity, require_identity
-from app.schemas import CreateScrapeJobRequest, ScrapedDocumentResponse, ScrapeJobResponse
+from app.schemas import (
+    CreateScrapeJobRequest,
+    ResearchRequest,
+    ResearchResponse,
+    ScrapedDocumentResponse,
+    ScrapeJobResponse,
+)
 from py_shared.errors import ApiError
 
 router = APIRouter()
@@ -98,6 +105,22 @@ async def get_scrape_job_document(job_id: str, identity: Identity = Depends(requ
         text_content=doc["text_content"],
         created_at=doc["created_at"],
     )
+
+
+@router.post("/internal/research", response_model=ResearchResponse)
+async def research(body: ResearchRequest) -> ResearchResponse:
+    """Service-to-service only, same trust model as every other /internal/*
+    route (the Gateway's _reject_internal_paths blocks public access — see
+    services/gateway/app/api/routes.py). Used by AI Generation's optional
+    "web research" toggle: given just a topic (no URL from the user),
+    fetches factual context via Wikipedia's API (see app/search.py's
+    docstring for why that instead of a general web search) synchronously,
+    so the result can be folded into the same generation request rather
+    than the async scrape-job flow the rest of this service uses."""
+    result = await search_module.research(body.query)
+    if not result:
+        raise ApiError("no_research_result", f"Could not find a usable page for query: {body.query}", 404)
+    return ResearchResponse(**result)
 
 
 @router.get("/scraped-documents/{document_id}", response_model=ScrapedDocumentResponse)

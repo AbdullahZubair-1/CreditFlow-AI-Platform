@@ -27,7 +27,6 @@ const ICON_PATHS: Record<string, string> = {
   credits: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m9-8a9 9 0 11-18 0 9 9 0 0118 0z",
   marketplace: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z",
   profile: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
-  scraper: "M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z",
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -48,7 +47,6 @@ function NavIcon({ name }: { name: string }) {
 const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { to: "/dashboard/content", label: "Content Studio", icon: "content" },
-  { to: "/dashboard/scraper", label: "Web Scraper", icon: "scraper" },
   { to: "/dashboard/calendar", label: "Calendar", icon: "calendar", requiresPaidPlan: true },
   { to: "/dashboard/linkedin", label: "LinkedIn", icon: "linkedin", requiresPaidPlan: true },
   { to: "/dashboard/team", label: "Team", icon: "team", ownerOnly: true, requiresTeamPlan: true },
@@ -65,6 +63,7 @@ const PLAN_LABELS: Record<string, string> = { free: "Free", pro: "Pro", team: "T
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { claims, logout } = useAuth();
   const { planTier, currentAccount } = useAccount();
+  const isSuperAdmin = claims?.is_superadmin ?? false;
   const isOwner = claims ? OWNER_ROLES.has(claims.role) : false;
   const hasPaidPlan = planTier !== null && PAID_TIERS.has(planTier);
   const hasTeamPlan = planTier === "team";
@@ -74,35 +73,36 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-slate-50 text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
       <div className="flex">
         <aside className="hidden w-60 shrink-0 border-r border-slate-200 px-4 py-6 transition-colors duration-200 dark:border-slate-800 sm:block">
-          <NavLink to="/dashboard" className="mb-6 flex items-center gap-2 px-2 text-lg font-semibold">
+          <NavLink to={isSuperAdmin ? "/admin" : "/dashboard"} className="mb-6 flex items-center gap-2 px-2 text-lg font-semibold">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-sm">
               C
             </span>
             CreditFlow
           </NavLink>
           <nav className="space-y-1">
-            {NAV_ITEMS.filter(
-              (item) =>
-                (!item.ownerOnly || isOwner) &&
-                (!item.requiresPaidPlan || hasPaidPlan) &&
-                (!item.requiresTeamPlan || hasTeamPlan)
-            ).map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/dashboard"}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
-                    isActive
-                      ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-white"
-                  }`
-                }
-              >
-                <NavIcon name={item.icon} />
-                {item.label}
-              </NavLink>
-            ))}
+            {!isSuperAdmin &&
+              NAV_ITEMS.filter(
+                (item) =>
+                  (!item.ownerOnly || isOwner) &&
+                  (!item.requiresPaidPlan || hasPaidPlan) &&
+                  (!item.requiresTeamPlan || hasTeamPlan)
+              ).map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === "/dashboard"}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
+                      isActive
+                        ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-white"
+                    }`
+                  }
+                >
+                  <NavIcon name={item.icon} />
+                  {item.label}
+                </NavLink>
+              ))}
             {claims?.is_superadmin && (
               <NavLink
                 to="/admin"
@@ -139,16 +139,24 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex-1">
           <header className="flex items-center justify-between border-b border-slate-200 bg-white/80 px-6 py-4 backdrop-blur transition-colors duration-200 dark:border-slate-800 dark:bg-slate-950/80">
             <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-              <span className="capitalize">Role: {claims?.role}</span>
-              {planLabel && (
-                <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
-                  {planLabel} plan
+              {isSuperAdmin ? (
+                <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-500/20 dark:text-amber-300">
+                  Role: SuperAdmin
                 </span>
-              )}
-              {currentAccount?.type === "team" && (
-                <span>
-                  {currentAccount.member_count} member{currentAccount.member_count === 1 ? "" : "s"}
-                </span>
+              ) : (
+                <>
+                  <span className="capitalize">Role: {claims?.role}</span>
+                  {planLabel && (
+                    <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                      {planLabel} plan
+                    </span>
+                  )}
+                  {currentAccount?.type === "team" && (
+                    <span>
+                      {currentAccount.member_count} member{currentAccount.member_count === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </>
               )}
             </div>
             <div className="flex items-center gap-3">

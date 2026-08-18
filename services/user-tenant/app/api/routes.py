@@ -2,10 +2,10 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import events
+from app import clients, events
 from app.config import settings
 from app.db import get_session
 from app.identity import Identity, require_identity
@@ -140,7 +140,42 @@ async def accept_invite(
     if not invite or invite.status != "pending" or invite.expires_at < datetime.now(UTC):
         raise ApiError("invalid_invite", "Invite is invalid, expired, or already used.", 400)
 
-    invite.status = "accepted"
+    # An invite link carries no identity of its own — whoever is logged in
+    # when they click it is who accept_invite used to add, regardless of
+    # whether that's actually the person the invite named. Confirming the
+    # currently-authenticated user's real email (via Auth, since this
+    # service owns membership but not identity) matches the invite's
+    # target email is what actually enforces "this invite is for a
+    # specific person," not just a bearer-token-style link anyone could
+    # forward or reuse.
+    accepting_email = await clients.get_user_email(identity.user_id)
+    if not accepting_email or accepting_email.lower() != invite.email.lower():
+        raise ApiError(
+            "invite_email_mismatch",
+            f"This invite was sent to {invite.email}. Log in as that email to accept it.",
+            403,
+        )
+
+    existing = await session.scalar(
+        select(AccountMember).where(
+            AccountMember.account_id == invite.account_id, AccountMember.user_id == uuid.UUID(identity.user_id)
+        )
+    )
+    if existing:
+        raise ApiError("already_member", "You're already a member of this account.", 409)
+
+    # Atomic claim: the UPDATE...WHERE status='pending' (not a plain read
+    # then separate write) is what actually prevents two concurrent accept
+    # attempts on the same token from both passing the "is pending" check
+    # above and then racing on the AccountMember insert — a real failure
+    # mode, not hypothetical, since nothing about an emailed link stops it
+    # from being opened/submitted more than once.
+    result = await session.execute(
+        update(Invite).where(Invite.id == invite.id, Invite.status == "pending").values(status="accepted")
+    )
+    if result.rowcount == 0:
+        raise ApiError("invalid_invite", "Invite is invalid, expired, or already used.", 400)
+
     session.add(
         AccountMember(account_id=invite.account_id, user_id=uuid.UUID(identity.user_id), role=invite.role)
     )

@@ -24,6 +24,19 @@ export interface AccountOverview {
   owner_created_at: string | null;
 }
 
+export interface UserDirectoryEntry {
+  user_id: string;
+  email: string;
+  email_verified: boolean;
+  is_platform_admin: boolean;
+  created_at: string;
+}
+
+export interface UserDirectory {
+  total_revenue_cents: number;
+  users: UserDirectoryEntry[];
+}
+
 export interface AdminSession {
   jti: string;
   user_id: string;
@@ -44,6 +57,10 @@ export interface AuditLogEntry {
 
 export function listAllAccounts() {
   return apiFetch<AccountDirectoryEntry[]>("/admin/accounts");
+}
+
+export function listAllUsers() {
+  return apiFetch<UserDirectory>("/admin/users");
 }
 
 export function getAccountOverview(accountId: string) {

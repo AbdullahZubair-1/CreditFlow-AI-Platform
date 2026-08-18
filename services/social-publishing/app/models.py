@@ -11,11 +11,18 @@ from app.db import Base
 class SocialConnection(Base):
     """Tokens are encrypted at rest (Fernet, see app/crypto.py) — the raw
     values only ever exist decrypted in memory for the duration of an
-    outbound LinkedIn API call."""
+    outbound LinkedIn API call.
+
+    Keyed by (account_id, user_id), not account_id alone — each team
+    member connects their own LinkedIn account rather than sharing one
+    connection for the whole team. A scheduled post publishes through
+    whoever created that content's own connection (see events.py's
+    _handle_content_scheduled), not a single team-wide default."""
 
     __tablename__ = "social_connections"
 
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     linkedin_member_urn: Mapped[str] = mapped_column(String(128), nullable=False)
     access_token_encrypted: Mapped[str] = mapped_column(String(2048), nullable=False)
     refresh_token_encrypted: Mapped[str | None] = mapped_column(String(2048), nullable=True)

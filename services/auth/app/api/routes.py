@@ -367,8 +367,15 @@ async def internal_get_user(user_id: uuid.UUID, session: AsyncSession = Depends(
     /internal/* path on its proxy routes (see _reject_internal_paths in
     services/gateway/app/api/routes.py) so this is unreachable from the
     public internet. Used by the Notification Service to resolve an email
-    address from a user_id carried in an event payload."""
+    address from a user_id carried in an event payload, and by the Admin
+    Service to show an account owner's email/signup/verification status
+    in the SuperAdmin console."""
     user = await session.get(User, user_id)
     if not user:
         raise ApiError("not_found", "User not found.", 404)
-    return {"user_id": str(user.id), "email": user.email}
+    return {
+        "user_id": str(user.id),
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "created_at": user.created_at.isoformat(),
+    }

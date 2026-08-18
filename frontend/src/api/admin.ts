@@ -5,6 +5,7 @@ export interface AccountDirectoryEntry {
   name: string;
   type: string;
   plan_tier: string;
+  total_revenue_cents: number;
 }
 
 export interface AccountOverview {
@@ -17,6 +18,10 @@ export interface AccountOverview {
   credit_balance: number | null;
   usage_this_period_tokens: number | null;
   usage_quota_tokens: number | null;
+  total_revenue_cents: number;
+  owner_email: string | null;
+  owner_email_verified: boolean | null;
+  owner_created_at: string | null;
 }
 
 export interface AdminSession {

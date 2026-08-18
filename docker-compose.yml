@@ -287,6 +287,7 @@ services:
       BILLING_SERVICE_URL: http://billing:8000
       CREDITS_SERVICE_URL: http://credits:8000
       USAGE_SERVICE_URL: http://usage:8000
+      AUTH_SERVICE_URL: http://auth:8000
     depends_on:
       redis:
         condition: service_healthy

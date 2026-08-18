@@ -35,6 +35,19 @@ class AccountOverviewResponse(BaseModel):
     owner_created_at: str | None = None
 
 
+class UserDirectoryEntry(BaseModel):
+    user_id: str
+    email: str
+    email_verified: bool
+    is_platform_admin: bool
+    created_at: str
+
+
+class UserDirectoryResponse(BaseModel):
+    total_revenue_cents: int
+    users: list[UserDirectoryEntry]
+
+
 class AuditLogEntryResponse(BaseModel):
     id: str
     event_id: str

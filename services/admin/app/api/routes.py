@@ -8,7 +8,14 @@ from app import clients, redis_client
 from app.db import get_session
 from app.identity import Identity, require_access_to_account, require_identity, require_superadmin
 from app.models import AuditLog
-from app.schemas import AccountDirectoryEntry, AccountOverviewResponse, AuditLogEntryResponse, SessionResponse
+from app.schemas import (
+    AccountDirectoryEntry,
+    AccountOverviewResponse,
+    AuditLogEntryResponse,
+    SessionResponse,
+    UserDirectoryEntry,
+    UserDirectoryResponse,
+)
 from py_shared.errors import ApiError
 
 router = APIRouter()
@@ -23,6 +30,20 @@ async def list_accounts(identity: Identity = Depends(require_identity)) -> list[
         AccountDirectoryEntry(**a, total_revenue_cents=revenue_by_account.get(a["account_id"], 0))
         for a in accounts
     ]
+
+
+@router.get("/admin/users", response_model=UserDirectoryResponse)
+async def list_users(identity: Identity = Depends(require_identity)) -> UserDirectoryResponse:
+    """SuperAdmin-only, platform-wide user directory — every user on the
+    platform in one flat list, independent of which account(s) they
+    belong to or that account's plan tier/type, plus total platform
+    revenue as a single figure rather than broken down per account."""
+    require_superadmin(identity)
+    users, revenue_by_account = await clients.list_all_users(), await clients.get_revenue_by_account()
+    return UserDirectoryResponse(
+        total_revenue_cents=sum(revenue_by_account.values()),
+        users=[UserDirectoryEntry(**u) for u in users],
+    )
 
 
 @router.get("/admin/accounts/{account_id}/overview", response_model=AccountOverviewResponse)

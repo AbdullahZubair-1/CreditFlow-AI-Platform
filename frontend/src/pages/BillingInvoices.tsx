@@ -15,12 +15,14 @@ import {
 import { ApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { useAuth } from "../context/AuthContext";
 
 // Must match services/billing/app/config.py's REFUND_WINDOW_DAYS/REFUND_RATE
 // — duplicated here since the frontend has no shared-config import path to
 // the backend, and the backend is the actual source of truth/enforcement.
 const REFUND_WINDOW_DAYS = 7;
 const REFUND_RATE = 0.95;
+const OWNER_TIER_ROLES = new Set(["owner", "admin"]);
 
 function isWithinRefundWindow(createdAt: string): boolean {
   const ageMs = Date.now() - new Date(createdAt).getTime();
@@ -28,6 +30,8 @@ function isWithinRefundWindow(createdAt: string): boolean {
 }
 
 export default function BillingInvoices() {
+  const { claims } = useAuth();
+  const canManagePlan = claims ? OWNER_TIER_ROLES.has(claims.role) : false;
   const [params] = useSearchParams();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
@@ -114,13 +118,19 @@ export default function BillingInvoices() {
                 ${(plan.display_price_cents / 100).toFixed(0)}
                 <span className="text-sm text-slate-500 dark:text-slate-400">/mo</span>
               </p>
-              <button
-                disabled={isCurrent || busyPlan === plan.tier || plan.tier === "free"}
-                onClick={() => handleSelectPlan(plan.tier)}
-                className="mt-4 w-full rounded-md border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
-              >
-                {isCurrent ? "Current plan" : busyPlan === plan.tier ? "Updating..." : "Choose plan"}
-              </button>
+              {canManagePlan ? (
+                <button
+                  disabled={isCurrent || busyPlan === plan.tier || plan.tier === "free"}
+                  onClick={() => handleSelectPlan(plan.tier)}
+                  className="mt-4 w-full rounded-md border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-medium hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {isCurrent ? "Current plan" : busyPlan === plan.tier ? "Updating..." : "Choose plan"}
+                </button>
+              ) : (
+                <p className="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
+                  {isCurrent ? "Current plan" : "Only an owner/admin can change the plan"}
+                </p>
+              )}
             </div>
           );
         })}
@@ -159,7 +169,7 @@ export default function BillingInvoices() {
                       <span className="text-xs text-emerald-600 dark:text-emerald-400">
                         Refunded {((inv.refunded_amount_cents as number) / 100).toFixed(2)} {inv.currency.toUpperCase()}
                       </span>
-                    ) : inv.status === "paid" && isWithinRefundWindow(inv.created_at) ? (
+                    ) : inv.status === "paid" && isWithinRefundWindow(inv.created_at) && canManagePlan ? (
                       <button
                         onClick={() => setRefundTarget(inv)}
                         className="text-xs text-red-600 dark:text-red-400 hover:underline"

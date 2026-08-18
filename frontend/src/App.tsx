@@ -121,31 +121,36 @@ export default function App() {
                 </OwnerRoute>
               }
             />
+            {/* Billing/Credits/Marketplace: any member can view (balance,
+                invoices, listings); the owner/admin-only actions within
+                them (change plan, buy/sell credits) are gated inside each
+                page and enforced server-side — see Gateway's
+                _require_owner_tier and Credits' own copy of it. */}
             <Route
               path="/dashboard/billing"
               element={
-                <OwnerRoute>
+                <ProtectedRoute>
                   <BillingInvoices />
-                </OwnerRoute>
+                </ProtectedRoute>
               }
             />
             <Route
               path="/dashboard/credits"
               element={
-                <OwnerRoute>
+                <ProtectedRoute>
                   <CreditsPage />
-                </OwnerRoute>
+                </ProtectedRoute>
               }
             />
             {/* Marketplace additionally requires the Pro or Team plan */}
             <Route
               path="/dashboard/marketplace"
               element={
-                <OwnerRoute>
+                <ProtectedRoute>
                   <PlanGateRoute requireTier="paid">
                     <MarketplacePage />
                   </PlanGateRoute>
-                </OwnerRoute>
+                </ProtectedRoute>
               }
             />
 

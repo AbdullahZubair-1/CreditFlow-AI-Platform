@@ -50,9 +50,12 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard/calendar", label: "Calendar", icon: "calendar", requiresPaidPlan: true },
   { to: "/dashboard/linkedin", label: "LinkedIn", icon: "linkedin", requiresPaidPlan: true },
   { to: "/dashboard/team", label: "Team", icon: "team", ownerOnly: true, requiresTeamPlan: true },
-  { to: "/dashboard/billing", label: "Billing", icon: "billing", ownerOnly: true },
-  { to: "/dashboard/credits", label: "Credits", icon: "credits", ownerOnly: true },
-  { to: "/dashboard/marketplace", label: "Marketplace", icon: "marketplace", ownerOnly: true, requiresPaidPlan: true },
+  // Not ownerOnly: members can view billing/credits/marketplace (balance,
+  // invoices, listings) — they just can't buy/sell credits or change the
+  // plan, which is gated inside each page and enforced server-side.
+  { to: "/dashboard/billing", label: "Billing", icon: "billing" },
+  { to: "/dashboard/credits", label: "Credits", icon: "credits" },
+  { to: "/dashboard/marketplace", label: "Marketplace", icon: "marketplace", requiresPaidPlan: true },
 ];
 
 const OWNER_ROLES = new Set(["owner", "admin"]);

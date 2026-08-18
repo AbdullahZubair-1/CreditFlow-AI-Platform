@@ -54,6 +54,10 @@ export default function LinkedInConnections() {
   return (
     <AppLayout>
       <h1 className="text-2xl font-semibold">LinkedIn Connections</h1>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        This is your own connection, not the team's — each member connects their own LinkedIn account. Content you
+        create publishes through this connection when it's scheduled.
+      </p>
 
       {params.get("error") && (
         <p className="mt-4 rounded-md bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400">

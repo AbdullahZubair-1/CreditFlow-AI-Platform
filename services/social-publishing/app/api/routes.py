@@ -45,10 +45,11 @@ async def callback(code: str | None = None, state: str | None = None, error: str
         return RedirectResponse(f"{settings.frontend_connections_url}?error=linkedin_error")
 
     account_id = uuid.UUID(claims["account_id"])
+    user_id = uuid.UUID(claims["user_id"])
     expires_at = datetime.now(UTC) + timedelta(seconds=token_response.get("expires_in", 60 * 24 * 60 * 60))
 
     async with async_session_factory() as session:
-        existing = await session.get(SocialConnection, account_id)
+        existing = await session.get(SocialConnection, (account_id, user_id))
         if existing:
             existing.linkedin_member_urn = member_urn
             existing.access_token_encrypted = encrypt_token(token_response["access_token"])
@@ -60,6 +61,7 @@ async def callback(code: str | None = None, state: str | None = None, error: str
             session.add(
                 SocialConnection(
                     account_id=account_id,
+                    user_id=user_id,
                     linkedin_member_urn=member_urn,
                     access_token_encrypted=encrypt_token(token_response["access_token"]),
                     refresh_token_encrypted=(
@@ -79,7 +81,9 @@ async def callback(code: str | None = None, state: str | None = None, error: str
 async def get_connection_status(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
 ) -> ConnectionStatusResponse:
-    connection = await session.get(SocialConnection, uuid.UUID(identity.account_id))
+    """Always "my own" connection, not the account's — see models.py's
+    SocialConnection docstring for why this is per-user now."""
+    connection = await session.get(SocialConnection, (uuid.UUID(identity.account_id), uuid.UUID(identity.user_id)))
     if not connection:
         return ConnectionStatusResponse(connected=False)
     return ConnectionStatusResponse(
@@ -91,9 +95,9 @@ async def get_connection_status(
 async def disconnect(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
 ) -> None:
-    connection = await session.get(SocialConnection, uuid.UUID(identity.account_id))
+    connection = await session.get(SocialConnection, (uuid.UUID(identity.account_id), uuid.UUID(identity.user_id)))
     if not connection:
-        raise ApiError("not_found", "No LinkedIn connection for this account.", 404)
+        raise ApiError("not_found", "You don't have a LinkedIn connection to disconnect.", 404)
     await session.delete(connection)
     await session.commit()
 

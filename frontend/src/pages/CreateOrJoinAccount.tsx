@@ -4,17 +4,52 @@ import { useNavigate } from "react-router-dom";
 import { acceptInvite, createTeamAccount, listMyAccounts, type Account } from "../api/accounts";
 import { ApiError } from "../api/client";
 import AuthLayout from "../components/AuthLayout";
+import { PLANS } from "../data/plans";
+
+const FREE_PLAN = PLANS[0];
 
 export default function CreateOrJoinAccount() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [teamName, setTeamName] = useState("");
   const [inviteToken, setInviteToken] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Every successful login/signup lands here — if the user actually came
+  // from an invite link (see AcceptInvite.tsx's stashAndGo), this page
+  // should never even flash the normal "create or join" choices in front
+  // of them; it should just finish the join and move on.
+  const [resumingInvite, setResumingInvite] = useState(() => localStorage.getItem("pending_invite_token") !== null);
   const navigate = useNavigate();
 
   useEffect(() => {
+    const pendingToken = localStorage.getItem("pending_invite_token");
+    if (!pendingToken) return;
+
+    acceptInvite(pendingToken)
+      .then(() => {
+        localStorage.removeItem("pending_invite_token");
+        navigate("/dashboard");
+      })
+      .catch((err) => {
+        localStorage.removeItem("pending_invite_token");
+        setError(err instanceof ApiError ? err.message : "This invite is invalid or has expired.");
+        setResumingInvite(false);
+      });
+  }, [navigate]);
+
+  useEffect(() => {
+    if (resumingInvite) return;
     listMyAccounts().then(setAccounts).catch(() => undefined);
-  }, []);
+  }, [resumingInvite]);
+
+  if (resumingInvite) {
+    return (
+      <AuthLayout title="Joining team...">
+        <p className="text-center text-sm text-slate-500 dark:text-slate-400">
+          You followed a team invite link — joining automatically, one moment.
+        </p>
+      </AuthLayout>
+    );
+  }
 
   async function handleCreateTeam(e: React.FormEvent) {
     e.preventDefault();
@@ -61,6 +96,23 @@ export default function CreateOrJoinAccount() {
           </button>
         </div>
       )}
+
+      <div className="mb-6 rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900/60">
+        <p className="text-sm font-medium">New accounts start on the {FREE_PLAN.name} plan — {FREE_PLAN.credits}</p>
+        <ul className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-400">
+          {FREE_PLAN.features.map((f) => (
+            <li key={f} className="flex items-start gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="mt-0.5 h-4 w-4 shrink-0 text-brand-500">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              {f}
+            </li>
+          ))}
+        </ul>
+        <a href="/#pricing" className="mt-3 inline-block text-xs font-medium text-brand-600 hover:underline dark:text-brand-400">
+          See Pro/Team plans for scheduling, LinkedIn publishing, and the marketplace →
+        </a>
+      </div>
 
       <form onSubmit={handleCreateTeam} className="space-y-3">
         <p className="text-sm text-slate-500 dark:text-slate-400">Create a team account</p>

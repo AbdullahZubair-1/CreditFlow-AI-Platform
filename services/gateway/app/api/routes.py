@@ -37,20 +37,23 @@ OWNER_TIER_ROLES = {"owner", "admin"}
 
 
 def _require_owner_tier(identity: Identity) -> None:
-    """Centralizes role enforcement at the Gateway for the two domains the
-    spec's frontend page list marks as Owner-Only in their entirety
-    (Billing & Invoices, Credits & Marketplace) — this is in addition to,
-    not instead of, each service's own checks. It's a real fix for Credits
+    """Centralizes role enforcement at the Gateway for Billing & Credits/
+    Marketplace's *mutating* actions — this is in addition to, not instead
+    of, each service's own checks. It's a real fix for Credits
     specifically: that service has no server-side role check at all today,
     so without this, any authenticated member could hit its endpoints
-    directly (bypassing the frontend's OwnerRoute) despite the page being
-    spec'd as owner-only. Content/Scheduler/Social/Admin/Usage/AI
-    Generation deliberately do NOT get a blanket gate like this — their
-    real permission rules are finer-grained than "owner vs. everyone else"
-    (e.g. Content: any member can edit, only owner/admin can publish), so
-    duplicating that logic here would either be redundant or actively
-    wrong.
-    """
+    directly despite these specific actions being owner/admin-only.
+    Content/Scheduler/Social/Admin/Usage/AI Generation deliberately do NOT
+    get a blanket gate like this — their real permission rules are
+    finer-grained than "owner vs. everyone else" (e.g. Content: any member
+    can edit, only owner/admin can publish), so duplicating that logic
+    here would either be redundant or actively wrong.
+
+    Members can otherwise do everything in these two domains — view plans,
+    subscription status, invoices, credit balance, transaction history,
+    and browse marketplace listings — except buy/sell credits and change
+    the plan, which is what this gate actually restricts (see the two call
+    sites below, both scoped to non-GET requests only)."""
     if identity.role not in OWNER_TIER_ROLES:
         raise ApiError("forbidden", "This action requires an owner or admin role.", 403)
 
@@ -165,13 +168,15 @@ async def proxy_invites(path: str, request: Request, identity: Identity = Depend
 
 @router.api_route("/billing/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_billing(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    _require_owner_tier(identity)
+    if request.method != "GET":
+        _require_owner_tier(identity)
     return await _proxy_protected(settings.billing_service_url, path, request, identity)
 
 
 @router.api_route("/credits/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"])
 async def proxy_credits(path: str, request: Request, identity: Identity = Depends(require_jwt)) -> Response:
-    _require_owner_tier(identity)
+    if request.method != "GET":
+        _require_owner_tier(identity)
     if path.startswith("marketplace"):
         await plan_access.require_paid_plan(identity.account_id)
     return await _proxy_protected(settings.credits_service_url, path, request, identity)
@@ -276,8 +281,12 @@ async def dashboard_summary(request: Request, identity: Identity = Depends(requi
     Tenant), credit balance (Credits), and usage this period (Usage) all at
     once. Each downstream call is independently best-effort: one service
     being briefly unavailable shouldn't blank out the whole dashboard, so a
-    failed section comes back as null rather than failing the request."""
-    _require_owner_tier(identity)  # this dashboard surfaces credits balance, an owner-only data domain
+    failed section comes back as null rather than failing the request.
+    No role gate here — every field this returns (plan tier, credit
+    balance, usage) is read-only info a member is allowed to see, and the
+    Dashboard nav item itself has never been owner-only; this call was
+    silently 403ing for every member until this fix, since it used to gate
+    read access the same way Billing/Credits' mutating actions do."""
     if not await redis_client.check_rate_limit(f"ip:{_client_ip(request)}", settings.rate_limit_per_ip_per_minute):
         raise ApiError("rate_limited", "Too many requests from this IP.", 429)
 

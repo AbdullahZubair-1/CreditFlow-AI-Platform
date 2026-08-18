@@ -48,7 +48,7 @@ async def refresh_due_connections() -> None:
             continue
 
         async with async_session_factory() as session:
-            row = await session.get(SocialConnection, connection.account_id)
+            row = await session.get(SocialConnection, (connection.account_id, connection.user_id))
             row.access_token_encrypted = encrypt_token(token_response["access_token"])
             if token_response.get("refresh_token"):
                 row.refresh_token_encrypted = encrypt_token(token_response["refresh_token"])

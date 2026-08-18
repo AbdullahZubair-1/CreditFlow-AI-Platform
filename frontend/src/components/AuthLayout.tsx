@@ -11,9 +11,7 @@ export default function AuthLayout({ title, children }: { title: string; childre
       </div>
       <div className="w-full max-w-sm animate-slide-up">
         <Link to="/" className="mb-8 flex items-center justify-center gap-2 text-xl font-semibold">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-sm">
-            C
-          </span>
+          <img src="/logo-icon.png" alt="" className="h-8 w-8" />
           CreditFlow
         </Link>
         <div className="rounded-xl border border-slate-200 bg-white p-8 shadow-sm transition-colors duration-200 dark:border-slate-800 dark:bg-slate-900">

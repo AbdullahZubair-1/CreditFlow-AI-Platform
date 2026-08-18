@@ -39,7 +39,7 @@ export default function Home() {
           AI-powered content, from prompt to published post
         </span>
         <h1 className="mt-6 text-4xl font-bold tracking-tight sm:text-5xl">
-          AI content, scheduled and published — on your credits.
+          AI content, scheduled and published on your credits.
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-slate-600 dark:text-slate-400">
           Generate content with AI, schedule it, publish to LinkedIn, and trade credits with other accounts on the

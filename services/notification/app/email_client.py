@@ -1,4 +1,7 @@
-import httpx
+import uuid
+from email.message import EmailMessage
+
+import aiosmtplib
 
 from app.config import settings
 
@@ -8,14 +11,27 @@ class EmailError(Exception):
 
 
 async def send_email(to: str, subject: str, html: str) -> str:
-    """Returns the provider's message id. Resend's REST API: a single
-    POST with a bearer token — no SDK needed for this scope."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post(
-            "https://api.resend.com/emails",
-            json={"from": settings.resend_from_email, "to": [to], "subject": subject, "html": html},
-            headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+    """Returns a locally-generated message id — plain SMTP has no
+    equivalent to Resend's API returning one in the response body, so
+    NotificationLog.provider_message_id is only a delivery receipt from
+    Resend's own API, not something SMTP servers hand back the same way."""
+    message = EmailMessage()
+    message["From"] = settings.smtp_from_email
+    message["To"] = to
+    message["Subject"] = subject
+    message.set_content("This email requires an HTML-capable client to view.")
+    message.add_alternative(html, subtype="html")
+
+    try:
+        await aiosmtplib.send(
+            message,
+            hostname=settings.smtp_host,
+            port=settings.smtp_port,
+            username=settings.smtp_username,
+            password=settings.smtp_password,
+            start_tls=True,
         )
-        if response.status_code not in (200, 201):
-            raise EmailError(f"Resend returned {response.status_code}: {response.text}")
-        return response.json().get("id", "")
+    except aiosmtplib.SMTPException as exc:
+        raise EmailError(f"SMTP send to {settings.smtp_host}:{settings.smtp_port} failed: {exc}") from exc
+
+    return str(uuid.uuid4())

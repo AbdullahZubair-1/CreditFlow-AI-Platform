@@ -140,6 +140,13 @@ async def login(
     if not user or not credential or not security.verify_password(body.password, credential.password_hash):
         raise ApiError("invalid_credentials", "Incorrect email or password.", 401)
 
+    if not user.email_verified:
+        raise ApiError(
+            "email_not_verified",
+            "Please verify your email before logging in — check your inbox for the verification link.",
+            403,
+        )
+
     account_id, role = await _resolve_default_account(str(user.id))
 
     access_token, claims = issue_access_token(str(user.id), account_id, role, user.is_platform_admin)

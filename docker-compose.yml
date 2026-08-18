@@ -394,15 +394,14 @@ services:
     restart: unless-stopped
     environment:
       NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-      NGROK_STATIC_DOMAIN: ${NGROK_STATIC_DOMAIN:-}
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        if [ -n "$$NGROK_STATIC_DOMAIN" ]; then
-          exec ngrok http nginx:80 --domain=$$NGROK_STATIC_DOMAIN
-        else
-          exec ngrok http nginx:80
-        fi
+    # No custom entrypoint — the official image's own default entrypoint
+    # handles making the local inspection API (port 4040) reachable
+    # correctly; a custom `sh -c` override (tried first) bypassed that and
+    # left it bound to 127.0.0.1 inside the container, unreachable through
+    # the port mapping below even with `ports:` set correctly. --domain is
+    # filled in once a real static domain hostname is known (temporarily
+    # omitted gets a random ngrok-assigned URL instead).
+    command: ["http", "nginx:80"]
     depends_on:
       - nginx
     ports:

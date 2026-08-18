@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 
 import Footer from "../components/Footer";
 import ThemeToggle from "../components/ThemeToggle";
+import { PLANS } from "../data/plans";
 
 const ICON_PATHS: Record<string, string> = {
   content: "M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
@@ -150,11 +151,7 @@ export default function Home() {
           Every plan includes a free signup bonus of 50 credits to try things out.
         </p>
         <div className="mt-10 grid grid-cols-1 gap-8 sm:grid-cols-3">
-          {[
-            { name: "Free", price: "$0", tagline: "Try it out", credits: "50 signup bonus credits" },
-            { name: "Pro", price: "$19", tagline: "For solo creators", credits: "1,000 credits/month" },
-            { name: "Team", price: "$49", tagline: "For teams", credits: "5,000 credits/month", highlight: true },
-          ].map((plan) => (
+          {PLANS.map((plan) => (
             <div
               key={plan.name}
               className={`relative flex flex-col rounded-xl border p-6 text-center shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg ${
@@ -174,7 +171,17 @@ export default function Home() {
                 <span className="text-sm font-normal text-slate-500 dark:text-slate-400">/mo</span>
               </p>
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{plan.tagline}</p>
-              <p className="mt-4 text-sm text-slate-700 dark:text-slate-300">{plan.credits}</p>
+              <p className="mt-4 text-sm font-medium text-slate-700 dark:text-slate-300">{plan.credits}</p>
+              <ul className="mt-4 flex-1 space-y-1.5 text-left text-sm text-slate-600 dark:text-slate-400">
+                {plan.features.map((f) => (
+                  <li key={f} className="flex items-start gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="mt-0.5 h-4 w-4 shrink-0 text-brand-500">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    {f}
+                  </li>
+                ))}
+              </ul>
               <Link
                 to="/signup"
                 className={`mt-6 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-200 ${

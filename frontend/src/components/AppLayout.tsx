@@ -92,7 +92,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                   className={({ isActive }) =>
                     `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
                       isActive
-                        ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                        ? "bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
                         : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-900 dark:hover:text-white"
                     }`
                   }
@@ -145,7 +145,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 <>
                   <span className="capitalize">Role: {claims?.role}</span>
                   {planLabel && (
-                    <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300">
+                    <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
                       {planLabel} plan
                     </span>
                   )}
@@ -166,7 +166,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                 className={({ isActive }) =>
                   `flex h-9 w-9 items-center justify-center rounded-md border transition-colors duration-200 ${
                     isActive
-                      ? "border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                      ? "border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
                       : "border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
                   }`
                 }

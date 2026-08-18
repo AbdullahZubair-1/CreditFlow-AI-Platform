@@ -70,7 +70,7 @@ export default function TeamManagement() {
           placeholder="teammate@company.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
         <select
           value={role}
@@ -80,7 +80,7 @@ export default function TeamManagement() {
           <option value="member">Member</option>
           <option value="admin">Admin</option>
         </select>
-        <button className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400">
+        <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
           Send invite
         </button>
       </form>

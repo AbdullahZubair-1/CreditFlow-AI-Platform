@@ -36,7 +36,7 @@ export default function ForgotPassword() {
   }
 
   const inputClass =
-    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
+    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500";
 
   if (step === "request") {
     return (
@@ -51,7 +51,7 @@ export default function ForgotPassword() {
             className={inputClass}
           />
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
+          <button className="w-full rounded-md bg-brand-500 px-4 py-2 font-medium hover:bg-brand-400">
             Send code
           </button>
         </form>
@@ -82,7 +82,7 @@ export default function ForgotPassword() {
           className={inputClass}
         />
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
+        <button className="w-full rounded-md bg-brand-500 px-4 py-2 font-medium hover:bg-brand-400">
           Reset password
         </button>
       </form>

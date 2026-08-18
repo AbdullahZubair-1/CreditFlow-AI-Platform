@@ -39,7 +39,7 @@ export default function CreateOrJoinAccount() {
   }
 
   const inputClass =
-    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500";
+    "w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500";
 
   return (
     <AuthLayout title="Create or join an account">
@@ -55,7 +55,7 @@ export default function CreateOrJoinAccount() {
           </ul>
           <button
             onClick={() => navigate("/dashboard")}
-            className="mt-4 w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400"
+            className="mt-4 w-full rounded-md bg-brand-500 px-4 py-2 font-medium hover:bg-brand-400"
           >
             Continue to dashboard
           </button>

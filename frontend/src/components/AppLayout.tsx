@@ -27,7 +27,6 @@ const ICON_PATHS: Record<string, string> = {
   credits: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V6m0 10v2m9-8a9 9 0 11-18 0 9 9 0 0118 0z",
   marketplace: "M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z",
   profile: "M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z",
-  scraper: "M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z",
 };
 
 function NavIcon({ name }: { name: string }) {
@@ -48,7 +47,6 @@ function NavIcon({ name }: { name: string }) {
 const NAV_ITEMS: NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: "dashboard" },
   { to: "/dashboard/content", label: "Content Studio", icon: "content" },
-  { to: "/dashboard/scraper", label: "Web Scraper", icon: "scraper" },
   { to: "/dashboard/calendar", label: "Calendar", icon: "calendar", requiresPaidPlan: true },
   { to: "/dashboard/linkedin", label: "LinkedIn", icon: "linkedin", requiresPaidPlan: true },
   { to: "/dashboard/team", label: "Team", icon: "team", ownerOnly: true, requiresTeamPlan: true },

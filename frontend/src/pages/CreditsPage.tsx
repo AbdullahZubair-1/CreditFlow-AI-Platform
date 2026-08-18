@@ -13,8 +13,13 @@ import {
   type LedgerEntry,
 } from "../api/credits";
 import AppLayout from "../components/AppLayout";
+import { useAuth } from "../context/AuthContext";
+
+const OWNER_TIER_ROLES = new Set(["owner", "admin"]);
 
 export default function CreditsPage() {
+  const { claims } = useAuth();
+  const canBuyCredits = claims ? OWNER_TIER_ROLES.has(claims.role) : false;
   const [params] = useSearchParams();
 
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -98,26 +103,30 @@ export default function CreditsPage() {
           Buy extra credits any time, on top of whatever your plan already grants
           {centsPerCredit ? ` — $${(centsPerCredit / 100).toFixed(2)} per credit` : ""}.
         </p>
-        <form onSubmit={handleDirectPurchase} className="mt-4 flex flex-wrap items-end gap-3">
-          <div>
-            <input
-              type="number"
-              min={1}
-              required
-              placeholder="Credits amount"
-              value={purchaseAmount}
-              onChange={(e) => setPurchaseAmount(e.target.value)}
-              className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
-            />
-            {purchasePriceUsd && <p className="mt-1 text-xs text-slate-500">Total: ${purchasePriceUsd}</p>}
-          </div>
-          <button
-            disabled={purchasing}
-            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
-          >
-            {purchasing ? "Starting checkout..." : "Buy credits"}
-          </button>
-        </form>
+        {canBuyCredits ? (
+          <form onSubmit={handleDirectPurchase} className="mt-4 flex flex-wrap items-end gap-3">
+            <div>
+              <input
+                type="number"
+                min={1}
+                required
+                placeholder="Credits amount"
+                value={purchaseAmount}
+                onChange={(e) => setPurchaseAmount(e.target.value)}
+                className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
+              />
+              {purchasePriceUsd && <p className="mt-1 text-xs text-slate-500">Total: ${purchasePriceUsd}</p>}
+            </div>
+            <button
+              disabled={purchasing}
+              className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
+            >
+              {purchasing ? "Starting checkout..." : "Buy credits"}
+            </button>
+          </form>
+        ) : (
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Only an owner/admin can buy credits.</p>
+        )}
       </div>
 
       <h2 className="mt-10 text-lg font-semibold">Transaction history</h2>

@@ -257,8 +257,10 @@ async def update_subscription(
 async def list_invoices(
     identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
 ) -> list[InvoiceResponse]:
-    _require_owner(identity)
-
+    # Read-only, so no _require_owner here — any member can see invoice
+    # history, they just can't act on it (checkout/change plan/refund are
+    # still owner-only, both here and via the Gateway's owner-tier gate on
+    # every non-GET billing request).
     rows = await session.scalars(
         select(Invoice)
         .where(Invoice.account_id == uuid.UUID(identity.account_id))

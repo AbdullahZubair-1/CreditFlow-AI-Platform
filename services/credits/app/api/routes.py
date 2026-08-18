@@ -23,6 +23,20 @@ from py_shared.errors import ApiError
 
 router = APIRouter()
 
+# Matches the Gateway's own OWNER_TIER_ROLES (owner + admin) — this service
+# previously had zero server-side role checks of its own, relying entirely
+# on the Gateway's now-relaxed blanket gate over the whole /credits/* prefix
+# (see services/gateway/app/api/routes.py). Members can browse listings and
+# see their own balance/transactions; only owner/admin can actually buy or
+# sell (list, cancel a listing, or purchase — from the marketplace or
+# directly), matching what was explicitly asked for.
+OWNER_TIER_ROLES = {"owner", "admin"}
+
+
+def _require_owner_tier(identity: Identity) -> None:
+    if identity.role not in OWNER_TIER_ROLES:
+        raise ApiError("forbidden", "This action requires an owner or admin role.", 403)
+
 
 @router.get("/plan-grants")
 async def get_plan_grants() -> dict[str, int]:
@@ -100,6 +114,7 @@ async def create_listing(
     identity: Identity = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
 ) -> ListingResponse:
+    _require_owner_tier(identity)
     if body.credits_amount <= 0 or body.price_cents <= 0:
         raise ApiError("invalid_listing", "credits_amount and price_cents must be positive.", 400)
 
@@ -162,6 +177,7 @@ async def cancel_listing(
     identity: Identity = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
 ) -> None:
+    _require_owner_tier(identity)
     listing = await session.get(MarketplaceListing, listing_id)
     if not listing or listing.seller_account_id != uuid.UUID(identity.account_id):
         raise ApiError("not_found", "Listing not found.", 404)
@@ -179,6 +195,7 @@ async def purchase_listing(
     identity: Identity = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
 ) -> PurchaseListingResponse:
+    _require_owner_tier(identity)
     listing = await session.get(MarketplaceListing, listing_id)
     if not listing or listing.status != "active":
         raise ApiError("not_found", "Listing not available for purchase.", 404)

@@ -17,9 +17,11 @@ import ConfirmDialog from "../components/ConfirmDialog";
 import { useAuth } from "../context/AuthContext";
 
 const MARKETPLACE_MIN_DISCOUNT_PERCENT = 5;
+const OWNER_TIER_ROLES = new Set(["owner", "admin"]);
 
 export default function MarketplacePage() {
   const { claims } = useAuth();
+  const canTrade = claims ? OWNER_TIER_ROLES.has(claims.role) : false;
   const [params] = useSearchParams();
 
   const [balance, setBalance] = useState<Balance | null>(null);
@@ -112,34 +114,38 @@ export default function MarketplacePage() {
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">List surplus credits for sale</h2>
-      <form onSubmit={handleCreateListing} className="mt-3 flex flex-wrap items-end gap-3">
-        <input
-          type="number"
-          min={1}
-          max={balance?.sellable_balance}
-          required
-          placeholder="Credits amount"
-          value={creditsAmount}
-          onChange={(e) => setCreditsAmount(e.target.value)}
-          className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
-        />
-        <div>
+      {canTrade ? (
+        <form onSubmit={handleCreateListing} className="mt-3 flex flex-wrap items-end gap-3">
           <input
             type="number"
-            min={0.01}
-            step="0.01"
+            min={1}
+            max={balance?.sellable_balance}
             required
-            placeholder="Price (USD)"
-            value={priceUsd}
-            onChange={(e) => setPriceUsd(e.target.value)}
+            placeholder="Credits amount"
+            value={creditsAmount}
+            onChange={(e) => setCreditsAmount(e.target.value)}
             className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
           />
-          {maxTotalUsd && <p className="mt-1 text-xs text-slate-500">Max allowed: ${maxTotalUsd}</p>}
-        </div>
-        <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
-          List for sale
-        </button>
-      </form>
+          <div>
+            <input
+              type="number"
+              min={0.01}
+              step="0.01"
+              required
+              placeholder="Price (USD)"
+              value={priceUsd}
+              onChange={(e) => setPriceUsd(e.target.value)}
+              className="w-40 rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
+            />
+            {maxTotalUsd && <p className="mt-1 text-xs text-slate-500">Max allowed: ${maxTotalUsd}</p>}
+          </div>
+          <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
+            List for sale
+          </button>
+        </form>
+      ) : (
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Only an owner/admin can list credits for sale.</p>
+      )}
 
       <h2 className="mt-10 text-lg font-semibold">Browse listings</h2>
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -151,7 +157,7 @@ export default function MarketplacePage() {
                 <p className="font-medium">{listing.credits_amount.toLocaleString()} credits</p>
                 <p className="text-sm text-slate-500 dark:text-slate-400">${(listing.price_cents / 100).toFixed(2)}</p>
               </div>
-              {isOwn ? (
+              {!canTrade ? null : isOwn ? (
                 <button onClick={() => setCancelTarget(listing.id)} className="text-sm text-red-600 dark:text-red-400 hover:underline">
                   Cancel
                 </button>

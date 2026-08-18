@@ -82,8 +82,11 @@ def modify_subscription(subscription_id: str, plan: str) -> None:
     )
 
 
-def create_refund(payment_intent_id: str, reason: str | None) -> stripe.Refund:
-    return stripe.Refund.create(payment_intent=payment_intent_id, reason=reason)
+def create_refund(payment_intent_id: str, amount_cents: int, reason: str | None) -> stripe.Refund:
+    # amount is explicit (95% of the original charge, per policy — see
+    # REFUND_RETENTION_RATE in app/config.py) rather than omitted, since
+    # omitting it tells Stripe to refund the full remaining charge amount.
+    return stripe.Refund.create(payment_intent=payment_intent_id, amount=amount_cents, reason=reason)
 
 
 def construct_webhook_event(payload: bytes, sig_header: str, webhook_secret: str) -> stripe.Event:

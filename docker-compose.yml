@@ -385,10 +385,13 @@ services:
   # Tunnels nginx's single origin to a public HTTPS URL, so LinkedIn OAuth
   # callbacks and Stripe webhooks (which both require a real internet-
   # reachable endpoint) can reach this local docker-compose stack.
-  # NGROK_AUTHTOKEN is required (free account at ngrok.com); NGROK_STATIC_DOMAIN
-  # is optional but strongly recommended — without it, the public URL
-  # changes every restart, which breaks the LinkedIn app's registered
-  # redirect URI and any already-configured Stripe webhook endpoint.
+  # NGROK_AUTHTOKEN is required (free account at ngrok.com). NGROK_STATIC_DOMAIN
+  # is required by this compose file's --domain flag below — every free ngrok
+  # account is issued exactly one permanent "dev domain" (visible on the
+  # Domains page of the dashboard) that never changes; pinning it explicitly
+  # here means the public URL stays identical across every container
+  # restart, so LINKEDIN_REDIRECT_URI and the LinkedIn app's own registered
+  # redirect URI only ever need to be set once.
   ngrok:
     image: ngrok/ngrok:latest
     restart: unless-stopped
@@ -398,10 +401,10 @@ services:
     # handles making the local inspection API (port 4040) reachable
     # correctly; a custom `sh -c` override (tried first) bypassed that and
     # left it bound to 127.0.0.1 inside the container, unreachable through
-    # the port mapping below even with `ports:` set correctly. --domain is
-    # filled in once a real static domain hostname is known (temporarily
-    # omitted gets a random ngrok-assigned URL instead).
-    command: ["http", "nginx:80"]
+    # the port mapping below even with `ports:` set correctly. Domain
+    # substitution happens via compose's own ${VAR} interpolation (not a
+    # shell) specifically to avoid needing that entrypoint override again.
+    command: ["http", "nginx:80", "--url=https://${NGROK_STATIC_DOMAIN}"]
     depends_on:
       - nginx
     ports:

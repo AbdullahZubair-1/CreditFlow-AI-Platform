@@ -167,6 +167,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       USAGE_SERVICE_URL: http://usage:8000
+      SCRAPER_SERVICE_URL: http://scraper:8000
       GROQ_API_KEY: ${GROQ_API_KEY:-gsk_placeholder}
     depends_on:
       postgres:
@@ -176,6 +177,8 @@ services:
       rabbitmq:
         condition: service_healthy
       usage:
+        condition: service_started
+      scraper:
         condition: service_started
     ports:
       - "8006:8000"

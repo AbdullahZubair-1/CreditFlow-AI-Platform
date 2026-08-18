@@ -9,6 +9,12 @@ class CreateGenerationRequest(BaseModel):
     # "post" generations get turned into a draft Content record by the
     # Content Service; other purposes (e.g. ad-hoc chat) are ignored by it.
     purpose: str = "post"
+    # Optional web research: no URL from the user, just the prompt itself —
+    # Scraper searches for and scrapes one relevant page, folded into the
+    # prompt as extra context before it ever reaches Groq. Best-effort: a
+    # failed search/scrape just means the generation proceeds without it,
+    # never blocks or fails the request itself.
+    use_web_research: bool = False
 
 
 class CreateGenerationResponse(BaseModel):

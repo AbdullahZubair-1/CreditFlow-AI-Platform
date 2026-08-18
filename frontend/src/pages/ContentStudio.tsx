@@ -30,6 +30,7 @@ export default function ContentStudio() {
   const [models, setModels] = useState<Record<string, string>>({});
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("fast");
+  const [useWebResearch, setUseWebResearch] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [streamedText, setStreamedText] = useState("");
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export default function ContentStudio() {
     setStreaming(true);
 
     try {
-      const { job_id } = await createGeneration(prompt, model, "post");
+      const { job_id } = await createGeneration(prompt, model, "post", useWebResearch);
       setCurrentJobId(job_id);
 
       stopStreamRef.current = streamGeneration(
@@ -185,11 +186,20 @@ export default function ContentStudio() {
               </>
             )}
           </select>
+          <label className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+            <input
+              type="checkbox"
+              checked={useWebResearch}
+              onChange={(e) => setUseWebResearch(e.target.checked)}
+              className="rounded border-slate-300 dark:border-slate-700"
+            />
+            Research the web first (no URL needed)
+          </label>
           <button
             disabled={streaming}
             className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400 disabled:opacity-50"
           >
-            {streaming ? "Generating..." : "Generate"}
+            {streaming ? (useWebResearch ? "Researching & generating..." : "Generating...") : "Generate"}
           </button>
         </div>
       </form>

@@ -62,15 +62,17 @@ async def create_generation(
     await session.commit()
 
     background_tasks.add_task(
-        _run_generation_safely, job.id, identity.account_id, model_slug, body.prompt
+        _run_generation_safely, job.id, identity.account_id, model_slug, body.prompt, body.use_web_research
     )
 
     return CreateGenerationResponse(job_id=str(job.id), status="pending")
 
 
-async def _run_generation_safely(job_id: uuid.UUID, account_id: str, model_slug: str, prompt: str) -> None:
+async def _run_generation_safely(
+    job_id: uuid.UUID, account_id: str, model_slug: str, prompt: str, use_web_research: bool = False
+) -> None:
     try:
-        await run_generation(job_id, account_id, model_slug, prompt)
+        await run_generation(job_id, account_id, model_slug, prompt, use_web_research)
     except Exception:  # noqa: BLE001
         # run_generation already handles its own failure path (marks the
         # job failed, publishes ai.generation_failed) — this is a last

@@ -32,7 +32,7 @@ export default function Login() {
           placeholder="Email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
         <input
           type="password"
@@ -40,18 +40,18 @@ export default function Login() {
           placeholder="Password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        <button className="w-full rounded-md bg-indigo-500 px-4 py-2 font-medium hover:bg-indigo-400">
+        <button className="w-full rounded-md bg-brand-500 px-4 py-2 font-medium hover:bg-brand-400">
           Log in
         </button>
       </form>
       <div className="mt-4 flex justify-between text-sm">
-        <Link to="/forgot-password" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+        <Link to="/forgot-password" className="text-brand-600 dark:text-brand-400 hover:underline">
           Forgot password?
         </Link>
-        <Link to="/signup" className="text-indigo-600 dark:text-indigo-400 hover:underline">
+        <Link to="/signup" className="text-brand-600 dark:text-brand-400 hover:underline">
           Sign up
         </Link>
       </div>

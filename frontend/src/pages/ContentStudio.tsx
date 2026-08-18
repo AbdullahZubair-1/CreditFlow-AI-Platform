@@ -165,7 +165,7 @@ export default function ContentStudio() {
           placeholder="What should the AI write about?"
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          className="w-full rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none focus:border-brand-500"
         />
         <div className="flex items-center gap-3">
           <select
@@ -197,7 +197,7 @@ export default function ContentStudio() {
           </label>
           <button
             disabled={streaming}
-            className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400 disabled:opacity-50"
+            className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
           >
             {streaming ? (useWebResearch ? "Researching & generating..." : "Generating...") : "Generate"}
           </button>
@@ -253,7 +253,7 @@ export default function ContentStudio() {
                 </button>
                 <button
                   onClick={() => setDetailTarget({ content, mode: "edit" })}
-                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                  className="text-xs text-brand-600 dark:text-brand-400 hover:underline"
                 >
                   Edit
                 </button>
@@ -266,7 +266,7 @@ export default function ContentStudio() {
                 {canApprove && content.status === "draft" && (
                   <button
                     onClick={() => handleApprove(content)}
-                    className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                    className="text-xs text-brand-600 dark:text-brand-400 hover:underline"
                   >
                     Approve
                   </button>

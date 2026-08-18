@@ -34,7 +34,7 @@ export default function AcceptInvite() {
         </p>
         <button
           onClick={() => navigate(`/login?redirect=/accept-invite?token=${token}`)}
-          className="mt-4 w-full rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400"
+          className="mt-4 w-full rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400"
         >
           Log in
         </button>
@@ -49,7 +49,7 @@ export default function AcceptInvite() {
       <button
         onClick={handleAccept}
         disabled={status === "accepting"}
-        className="mt-4 w-full rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400 disabled:opacity-50"
+        className="mt-4 w-full rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
       >
         {status === "accepting" ? "Joining..." : "Accept invite"}
       </button>

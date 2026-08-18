@@ -32,7 +32,7 @@ export default function ContentVersionHistoryModal({ content, onClose }: Content
               onClick={() => setSelected(v)}
               className={`mb-1 block w-full rounded-md px-2 py-1.5 text-left text-sm ${
                 selected?.version_number === v.version_number
-                  ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300"
+                  ? "bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
                   : "text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
               }`}
             >

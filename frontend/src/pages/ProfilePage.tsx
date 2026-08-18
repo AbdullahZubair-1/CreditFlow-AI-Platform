@@ -88,7 +88,7 @@ export default function ProfilePage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Your name"
-                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:border-indigo-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition-colors focus:border-brand-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
               />
             </div>
 
@@ -97,7 +97,7 @@ export default function ProfilePage() {
 
             <button
               disabled={saving}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-indigo-500 disabled:opacity-50"
+              className="rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-brand-500 disabled:opacity-50"
             >
               {saving ? "Saving..." : "Save changes"}
             </button>

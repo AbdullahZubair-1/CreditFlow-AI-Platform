@@ -136,7 +136,7 @@ export default function MarketplacePage() {
           />
           {maxTotalUsd && <p className="mt-1 text-xs text-slate-500">Max allowed: ${maxTotalUsd}</p>}
         </div>
-        <button className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400">
+        <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
           List for sale
         </button>
       </form>
@@ -159,7 +159,7 @@ export default function MarketplacePage() {
                 <button
                   onClick={() => handlePurchase(listing.id)}
                   disabled={busyListingId === listing.id}
-                  className="rounded-md bg-indigo-500 px-3 py-1.5 text-sm font-medium hover:bg-indigo-400 disabled:opacity-50"
+                  className="rounded-md bg-brand-500 px-3 py-1.5 text-sm font-medium hover:bg-brand-400 disabled:opacity-50"
                 >
                   {busyListingId === listing.id ? "Starting checkout..." : "Buy"}
                 </button>

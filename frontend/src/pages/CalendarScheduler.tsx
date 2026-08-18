@@ -108,13 +108,13 @@ export default function CalendarScheduler() {
           <div className="flex rounded-md border border-slate-300 dark:border-slate-700 text-sm">
             <button
               onClick={() => setViewMode("month")}
-              className={`px-3 py-1.5 ${viewMode === "month" ? "bg-indigo-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+              className={`px-3 py-1.5 ${viewMode === "month" ? "bg-brand-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
             >
               Month
             </button>
             <button
               onClick={() => setViewMode("week")}
-              className={`px-3 py-1.5 ${viewMode === "week" ? "bg-indigo-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+              className={`px-3 py-1.5 ${viewMode === "week" ? "bg-brand-500 text-white" : "hover:bg-slate-100 dark:hover:bg-slate-800"}`}
             >
               Week
             </button>
@@ -154,7 +154,7 @@ export default function CalendarScheduler() {
               onClick={() => setSelectedDate(day)}
               className={`min-h-24 rounded-md border p-2 text-left align-top ${
                 inMonth ? "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" : "border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-950 text-slate-600"
-              } hover:border-indigo-500`}
+              } hover:border-brand-500`}
             >
               <span className="text-xs">{day.getDate()}</span>
               <div className="mt-1 space-y-1">
@@ -167,7 +167,7 @@ export default function CalendarScheduler() {
                         ? "bg-emerald-500/20 text-emerald-300"
                         : p.status === "cancelled"
                         ? "bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-400 line-through"
-                        : "bg-indigo-500/20 text-indigo-300"
+                        : "bg-brand-500/20 text-brand-300"
                     }`}
                   >
                     {new Date(p.publish_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
@@ -209,7 +209,7 @@ export default function CalendarScheduler() {
                           newDate.setHours(h || 0, m || 0);
                           handleReschedule(p, newDate);
                         }}
-                        className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                        className="text-xs text-brand-600 dark:text-brand-400 hover:underline"
                       >
                         Reschedule
                       </button>
@@ -251,7 +251,7 @@ export default function CalendarScheduler() {
               onChange={(e) => setScheduleTime(e.target.value)}
               className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
             />
-            <button className="rounded-md bg-indigo-500 px-4 py-2 text-sm font-medium hover:bg-indigo-400">
+            <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
               Schedule
             </button>
           </form>

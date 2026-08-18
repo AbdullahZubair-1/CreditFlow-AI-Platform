@@ -16,6 +16,17 @@ import { ApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
 import ConfirmDialog from "../components/ConfirmDialog";
 
+// Must match services/billing/app/config.py's REFUND_WINDOW_DAYS/REFUND_RATE
+// — duplicated here since the frontend has no shared-config import path to
+// the backend, and the backend is the actual source of truth/enforcement.
+const REFUND_WINDOW_DAYS = 7;
+const REFUND_RATE = 0.95;
+
+function isWithinRefundWindow(createdAt: string): boolean {
+  const ageMs = Date.now() - new Date(createdAt).getTime();
+  return ageMs <= REFUND_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+}
+
 export default function BillingInvoices() {
   const [params] = useSearchParams();
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -143,14 +154,16 @@ export default function BillingInvoices() {
                   <td className="px-4 py-2 text-right">
                     {refunded ? (
                       <span className="text-xs text-emerald-600 dark:text-emerald-400">Refund issued</span>
+                    ) : inv.status === "paid" && isWithinRefundWindow(inv.created_at) ? (
+                      <button
+                        onClick={() => setRefundTarget(inv)}
+                        className="text-xs text-red-600 dark:text-red-400 hover:underline"
+                      >
+                        Request refund
+                      </button>
                     ) : (
                       inv.status === "paid" && (
-                        <button
-                          onClick={() => setRefundTarget(inv)}
-                          className="text-xs text-red-600 dark:text-red-400 hover:underline"
-                        >
-                          Request refund
-                        </button>
+                        <span className="text-xs text-slate-400 dark:text-slate-500">Refund window expired</span>
                       )
                     )}
                   </td>
@@ -173,7 +186,7 @@ export default function BillingInvoices() {
         title="Request refund"
         message={
           refundTarget
-            ? `Refund ${(refundTarget.amount_cents / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()} for this invoice via Stripe? This can't be undone.`
+            ? `You'll receive ${((refundTarget.amount_cents * REFUND_RATE) / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()} back (95% of ${(refundTarget.amount_cents / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()}) — a 5% processing fee is retained. This can't be undone.`
             : ""
         }
         confirmLabel={refunding ? "Refunding..." : "Refund invoice"}

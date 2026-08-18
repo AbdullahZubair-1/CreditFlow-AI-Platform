@@ -48,3 +48,9 @@ PLAN_DISPLAY_PRICES_CENTS: dict[str, int] = {
 # so the Subscription row's plan_tier can actually be set to what was
 # purchased (see events._apply_subscription_updated).
 PRICE_ID_TO_PLAN: dict[str, str] = {price_id: plan for plan, price_id in PLAN_PRICE_IDS.items() if price_id}
+
+# Refund policy: only within this many days of the original charge, and
+# capped at this fraction of the original amount (the remainder is a
+# retained processing/cancellation fee, not refunded).
+REFUND_WINDOW_DAYS = 7
+REFUND_RATE = 0.95

@@ -55,6 +55,7 @@ class InvoiceResponse(BaseModel):
     currency: str
     status: str
     created_at: datetime
+    refunded_amount_cents: int | None = None
 
 
 class RefundRequest(BaseModel):

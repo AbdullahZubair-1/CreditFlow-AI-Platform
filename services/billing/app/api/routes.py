@@ -264,11 +264,34 @@ async def list_invoices(
         .where(Invoice.account_id == uuid.UUID(identity.account_id))
         .order_by(Invoice.created_at.desc())
     )
+    invoices = rows.all()
+
+    # Whether an invoice has already been refunded was previously tracked
+    # only in the frontend's own in-memory state right after a successful
+    # refund click — reloading the page (or any other user/session ever
+    # viewing this list) had no way to know, since nothing here ever told
+    # the client. One grouped query rather than one refund lookup per
+    # invoice.
+    refunded_by_invoice = dict(
+        (
+            await session.execute(
+                select(Refund.invoice_id, Refund.amount_cents).where(
+                    Refund.invoice_id.in_([i.id for i in invoices])
+                )
+            )
+        ).all()
+    )
+
     return [
         InvoiceResponse(
-            id=str(i.id), amount_cents=i.amount_cents, currency=i.currency, status=i.status, created_at=i.created_at
+            id=str(i.id),
+            amount_cents=i.amount_cents,
+            currency=i.currency,
+            status=i.status,
+            created_at=i.created_at,
+            refunded_amount_cents=refunded_by_invoice.get(i.id),
         )
-        for i in rows.all()
+        for i in invoices
     ]
 
 

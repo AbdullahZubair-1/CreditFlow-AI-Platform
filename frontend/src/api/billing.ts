@@ -19,6 +19,7 @@ export interface Invoice {
   currency: string;
   status: string;
   created_at: string;
+  refunded_amount_cents: number | null;
 }
 
 export function listPlans() {

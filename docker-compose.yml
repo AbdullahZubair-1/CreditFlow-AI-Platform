@@ -355,11 +355,58 @@ services:
       dockerfile: frontend/Dockerfile
     restart: unless-stopped
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+      # Empty, not a host:port — once nginx unifies frontend + Gateway
+      # under one origin (see nginx/nginx.conf), apiFetch's relative paths
+      # resolve against whatever origin the browser actually loaded the
+      # page from (nginx on :80 locally, or the public ngrok URL), rather
+      # than hardcoding a specific port that only works for direct,
+      # un-proxied access.
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     depends_on:
       - gateway
     ports:
       - "5173:5173"
+
+  # Single entry point unifying the frontend and every Gateway-proxied API
+  # route under one origin — see nginx/nginx.conf for the exact routing
+  # rules and why /dashboard/summary and /admin each need special-cased
+  # exact-match handling ahead of their broader prefixes.
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - gateway
+      - frontend
+    ports:
+      - "80:80"
+
+  # Tunnels nginx's single origin to a public HTTPS URL, so LinkedIn OAuth
+  # callbacks and Stripe webhooks (which both require a real internet-
+  # reachable endpoint) can reach this local docker-compose stack.
+  # NGROK_AUTHTOKEN is required (free account at ngrok.com); NGROK_STATIC_DOMAIN
+  # is optional but strongly recommended — without it, the public URL
+  # changes every restart, which breaks the LinkedIn app's registered
+  # redirect URI and any already-configured Stripe webhook endpoint.
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+      NGROK_STATIC_DOMAIN: ${NGROK_STATIC_DOMAIN:-}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        if [ -n "$$NGROK_STATIC_DOMAIN" ]; then
+          exec ngrok http nginx:80 --domain=$$NGROK_STATIC_DOMAIN
+        else
+          exec ngrok http nginx:80
+        fi
+    depends_on:
+      - nginx
+    ports:
+      - "4040:4040"
 
 volumes:
   content_uploads:

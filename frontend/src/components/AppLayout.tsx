@@ -74,9 +74,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex">
         <aside className="hidden w-60 shrink-0 border-r border-slate-200 px-4 py-6 transition-colors duration-200 dark:border-slate-800 sm:block">
           <NavLink to={isSuperAdmin ? "/admin" : "/dashboard"} className="mb-6 flex items-center gap-2 px-2 text-lg font-semibold">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-sm">
-              C
-            </span>
+            <img src="/logo-icon.png" alt="" className="h-8 w-8" />
             CreditFlow
           </NavLink>
           <nav className="space-y-1">

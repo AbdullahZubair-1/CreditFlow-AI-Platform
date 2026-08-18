@@ -8,9 +8,7 @@ export default function Home() {
     <div className="flex min-h-screen flex-col bg-white text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
       <header className="flex items-center justify-between px-8 py-6">
         <span className="flex items-center gap-2 text-xl font-semibold">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 text-sm font-bold text-white shadow-sm">
-            C
-          </span>
+          <img src="/logo-icon.png" alt="" className="h-8 w-8" />
           CreditFlow
         </span>
         <nav className="flex items-center gap-5">

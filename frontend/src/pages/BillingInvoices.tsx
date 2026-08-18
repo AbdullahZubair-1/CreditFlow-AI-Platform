@@ -35,7 +35,6 @@ export default function BillingInvoices() {
   const [error, setError] = useState<string | null>(null);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<Invoice | null>(null);
-  const [refundedIds, setRefundedIds] = useState<Set<string>>(new Set());
   const [refunding, setRefunding] = useState(false);
 
   function refresh() {
@@ -73,7 +72,11 @@ export default function BillingInvoices() {
     setError(null);
     try {
       await createRefund(refundTarget.id);
-      setRefundedIds((prev) => new Set(prev).add(refundTarget.id));
+      // Re-fetch rather than guess the new state locally — refunded_amount_cents
+      // is real, server-computed data (and a refund can also downgrade the
+      // plan, see subscription below), so this is the source of truth,
+      // not something to fake client-side.
+      refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to issue refund.");
     } finally {
@@ -143,7 +146,7 @@ export default function BillingInvoices() {
           </thead>
           <tbody>
             {invoices.map((inv) => {
-              const refunded = refundedIds.has(inv.id);
+              const refunded = inv.refunded_amount_cents !== null;
               return (
                 <tr key={inv.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="px-4 py-2">{new Date(inv.created_at).toLocaleDateString()}</td>
@@ -153,7 +156,9 @@ export default function BillingInvoices() {
                   <td className="px-4 py-2 capitalize">{inv.status}</td>
                   <td className="px-4 py-2 text-right">
                     {refunded ? (
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400">Refund issued</span>
+                      <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                        Refunded {((inv.refunded_amount_cents as number) / 100).toFixed(2)} {inv.currency.toUpperCase()}
+                      </span>
                     ) : inv.status === "paid" && isWithinRefundWindow(inv.created_at) ? (
                       <button
                         onClick={() => setRefundTarget(inv)}

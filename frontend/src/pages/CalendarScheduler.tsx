@@ -16,7 +16,7 @@ export default function CalendarScheduler() {
   const [monthStart, setMonthStart] = useState(() => startOfMonth(new Date()));
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
   const [scheduled, setScheduled] = useState<ScheduledPost[]>([]);
-  const [schedulableContent, setSchedulableContent] = useState<Content[]>([]);
+  const [allContent, setAllContent] = useState<Content[]>([]);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedContentId, setSelectedContentId] = useState("");
   const [scheduleTime, setScheduleTime] = useState("09:00");
@@ -35,12 +35,16 @@ export default function CalendarScheduler() {
 
   useEffect(refresh, [viewMode, monthStart, weekStart]);
   useEffect(() => {
-    // Only approved content can actually be scheduled (enforced
-    // server-side too, see Scheduler's POST /scheduled) — a draft
-    // shouldn't show up as a schedulable option before someone's
-    // approved it in Content Studio.
-    listContent().then((all) => setSchedulableContent(all.filter((c) => c.status === "approved"))).catch(() => undefined);
+    listContent().then(setAllContent).catch(() => undefined);
   }, []);
+
+  // Only approved content can actually be scheduled (enforced server-side
+  // too, see Scheduler's POST /scheduled) — a draft shouldn't show up as a
+  // schedulable option before someone's approved it in Content Studio.
+  // Already-fired/published posts are excluded from this list but not
+  // from contentById below, since the calendar still needs their title.
+  const schedulableContent = useMemo(() => allContent.filter((c) => c.status === "approved"), [allContent]);
+  const contentById = useMemo(() => new Map(allContent.map((c) => [c.id, c])), [allContent]);
 
   const days = useMemo(
     () => (viewMode === "month" ? buildMonthGrid(monthStart) : buildWeekGrid(weekStart)),
@@ -157,6 +161,7 @@ export default function CalendarScheduler() {
                 {postsToday.map((p) => (
                   <div
                     key={p.id}
+                    title={contentById.get(p.content_id)?.title}
                     className={`truncate rounded px-1.5 py-0.5 text-xs ${
                       p.status === "fired"
                         ? "bg-emerald-500/20 text-emerald-300"
@@ -167,6 +172,7 @@ export default function CalendarScheduler() {
                   >
                     {new Date(p.publish_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
                     {p.recurrence !== "none" && ` (${p.recurrence})`}
+                    {contentById.get(p.content_id) && ` · ${contentById.get(p.content_id)!.title}`}
                   </div>
                 ))}
               </div>
@@ -182,10 +188,14 @@ export default function CalendarScheduler() {
           <div className="mt-3 space-y-2">
             {scheduled
               .filter((p) => sameDay(new Date(p.publish_at), selectedDate))
-              .map((p) => (
+              .map((p) => {
+                const content = contentById.get(p.content_id);
+                return (
                 <div key={p.id} className="flex items-center justify-between rounded-md border border-slate-200 dark:border-slate-800 p-3">
                   <div>
-                    <p className="text-sm">Scheduled at {new Date(p.publish_at).toLocaleTimeString()}</p>
+                    <p className="text-sm font-medium">{content?.title ?? "(content unavailable)"}</p>
+                    {content && <p className="mt-0.5 max-w-md truncate text-xs text-slate-500">{content.body}</p>}
+                    <p className="mt-1 text-sm">Scheduled at {new Date(p.publish_at).toLocaleTimeString()}</p>
                     <p className="text-xs text-slate-500">status: {p.status}</p>
                   </div>
                   {p.status === "scheduled" && (
@@ -209,7 +219,8 @@ export default function CalendarScheduler() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
           </div>
 
           <form onSubmit={handleSchedule} className="mt-4 flex flex-wrap items-end gap-3">

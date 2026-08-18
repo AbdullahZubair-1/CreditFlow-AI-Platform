@@ -8,10 +8,15 @@ class Settings(BaseSettings):
     user_tenant_service_url: str = "http://user-tenant:8000"
     frontend_base_url: str = "http://localhost:5173"
 
-    # Placeholder — Resend's free tier / sandbox domain. Replace with a
-    # real key before exercising real email delivery end-to-end.
-    resend_api_key: str = "re_placeholder"
-    resend_from_email: str = "CreditFlow <onboarding@resend.dev>"
+    # SMTP — e.g. Gmail (smtp.gmail.com:587, an App Password from
+    # myaccount.google.com/apppasswords, not your real account password).
+    # Unlike Resend's free/sandbox tier, a normal SMTP account has no
+    # "verified recipient" restriction — it sends to any real address.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = "smtp-placeholder@gmail.com"
+    smtp_password: str = "smtp-placeholder"
+    smtp_from_email: str = "CreditFlow <smtp-placeholder@gmail.com>"
 
     # Optional — Slack Incoming Webhooks need no OAuth app review, per the
     # spec. Left empty by default; ops alerts just log instead of posting

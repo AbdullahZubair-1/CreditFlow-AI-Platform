@@ -82,6 +82,14 @@ def modify_subscription(subscription_id: str, plan: str) -> None:
     )
 
 
+def cancel_subscription(subscription_id: str) -> None:
+    """Called when a refund is issued for a subscription invoice — refunding
+    a past charge but leaving the Stripe subscription active would just bill
+    the account again next cycle and silently flip its plan_tier back to
+    paid on the next invoice.paid webhook, contradicting the refund."""
+    stripe.Subscription.cancel(subscription_id)
+
+
 def create_refund(payment_intent_id: str, amount_cents: int, reason: str | None) -> stripe.Refund:
     # amount is explicit (95% of the original charge, per policy — see
     # REFUND_RETENTION_RATE in app/config.py) rather than omitted, since

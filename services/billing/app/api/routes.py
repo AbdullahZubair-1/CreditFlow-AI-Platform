@@ -345,6 +345,33 @@ async def create_refund(
             "amount_cents": refund.amount,
         },
     )
+
+    # A refunded invoice was a real subscription billing cycle (Stripe only
+    # generates Invoice objects for subscriptions here — one-time credit
+    # purchases go through checkout.session.completed instead), so refunding
+    # it means giving up that plan. Cancel the Stripe subscription itself
+    # (not just flip our own plan_tier) so the account doesn't get billed
+    # again next cycle and silently flipped back to paid on the next
+    # invoice.paid webhook, contradicting the refund. Same downgrade shape
+    # as the dunning scanner (app/dunning.py) uses, reusing the same
+    # already-verified sync path to User/Tenant's Account.plan_tier.
+    subscription = await session.scalar(
+        select(Subscription).where(Subscription.account_id == uuid.UUID(identity.account_id))
+    )
+    if subscription and subscription.plan_tier != "free":
+        if subscription.stripe_subscription_id:
+            try:
+                stripe_client.cancel_subscription(subscription.stripe_subscription_id)
+            except stripe.error.StripeError as exc:  # noqa: BLE001
+                raise ApiError("stripe_error", str(exc), 502) from exc
+
+        subscription.plan_tier = "free"
+        subscription.status = "downgraded"
+        subscription.grace_period_ends_at = None
+        add_outbox_event(
+            session, "subscription.downgraded", {"account_id": identity.account_id, "plan_tier": "free"}
+        )
+
     await session.commit()
 
     return RefundResponse(id=str(refund_row.id), amount_cents=refund_row.amount_cents)

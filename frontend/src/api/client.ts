@@ -63,21 +63,48 @@ async function parseErrorBody(res: Response): Promise<ApiError> {
 // by the browser automatically (credentials: "include") — this file never
 // sees its value. account_id is passed so silent refresh doesn't reset the
 // user back to their default account if they'd switched away from it.
+//
+// Single-flight: refresh tokens rotate on use (Auth revokes the old one in
+// the same transaction that issues a new pair), so two concurrent calls to
+// this function racing on the same not-yet-rotated cookie value is a real
+// failure mode, not a hypothetical one — a page that mounts several
+// components at once (AuthContext's own mount-time refresh, plus every
+// other one's 401-triggered refresh) all fire independently the moment the
+// access token has expired, which is exactly what happens after returning
+// from a real, multi-minute Stripe Checkout redirect. Only the first
+// request to reach Auth succeeds; every other one gets rejected as an
+// already-used token and calls setAccessToken(null) — and if that failure
+// resolves *after* the winning call's success, it wipes the just-restored
+// session, incorrectly bouncing an actually-still-logged-in user to
+// /login. Sharing one in-flight promise across every concurrent caller
+// means only one real request ever goes out.
+let refreshPromise: Promise<boolean> | null = null;
+
 export async function refreshAccessToken(): Promise<boolean> {
-  const accountId = getCurrentAccountId();
-  const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ account_id: accountId }),
-  });
-  if (!res.ok) {
-    setAccessToken(null);
-    return false;
+  if (refreshPromise) return refreshPromise;
+
+  refreshPromise = (async () => {
+    const accountId = getCurrentAccountId();
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ account_id: accountId }),
+    });
+    if (!res.ok) {
+      setAccessToken(null);
+      return false;
+    }
+    const data = await res.json();
+    setAccessToken(data.access_token);
+    return true;
+  })();
+
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
   }
-  const data = await res.json();
-  setAccessToken(data.access_token);
-  return true;
 }
 
 export async function apiFetch<T>(

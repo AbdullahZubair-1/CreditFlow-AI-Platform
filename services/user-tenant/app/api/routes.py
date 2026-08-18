@@ -108,6 +108,21 @@ async def invite_member(
     account = await session.get(Account, account_id)
     if not account or account.plan_tier != "team":
         raise ApiError("team_plan_required", "Inviting team members requires the Team plan.", 403)
+    if account.type != "team":
+        # A real gap: an "individual" account only ever needed the Team
+        # *plan_tier* to reach this point (an individual account can
+        # subscribe to any plan, including Team) — nothing checked the
+        # account *type* too, so inviting someone onto a personal account
+        # was possible and silently gave it a second member, breaking the
+        # "individual accounts have exactly one member" invariant the rest
+        # of the system assumes. A team needs its own account, created via
+        # POST /accounts, not a personal account with a matching plan.
+        raise ApiError(
+            "not_a_team_account",
+            "This is your personal account, not a team account. Create a team account first, then invite members "
+            "to that one.",
+            403,
+        )
 
     token = uuid.uuid4().hex
     invite = Invite(
@@ -139,6 +154,14 @@ async def accept_invite(
     invite = await session.scalar(select(Invite).where(Invite.token == token))
     if not invite or invite.status != "pending" or invite.expires_at < datetime.now(UTC):
         raise ApiError("invalid_invite", "Invite is invalid, expired, or already used.", 400)
+
+    # Defense in depth for invite_member's account.type=="team" check
+    # above: catches any invite created before that check existed, or one
+    # created some other way, before it can add a second member to what's
+    # supposed to be a single-person account.
+    target_account = await session.get(Account, invite.account_id)
+    if not target_account or target_account.type != "team":
+        raise ApiError("invalid_invite", "This invite's account is not a team account.", 400)
 
     # An invite link carries no identity of its own — whoever is logged in
     # when they click it is who accept_invite used to add, regardless of

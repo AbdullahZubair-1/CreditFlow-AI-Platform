@@ -6,7 +6,8 @@ import AppLayout from "../components/AppLayout";
 import { useAuth } from "../context/AuthContext";
 
 export default function ProfilePage() {
-  const { logout } = useAuth();
+  const { logout, claims } = useAuth();
+  const isSuperAdmin = claims?.is_superadmin ?? false;
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
@@ -105,66 +106,75 @@ export default function ProfilePage() {
 
         <div className="mt-8 rounded-xl border border-red-200 bg-red-50/50 p-6 transition-colors dark:border-red-900/50 dark:bg-red-950/20">
           <h2 className="text-lg font-semibold text-red-700 dark:text-red-400">Danger zone</h2>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Permanently delete your account. This cannot be undone.
-          </p>
 
-          {!deleteOpen ? (
-            <button
-              onClick={() => setDeleteOpen(true)}
-              className="mt-4 rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition-colors duration-200 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
-            >
-              Delete my account
-            </button>
+          {isSuperAdmin ? (
+            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              SuperAdmin accounts cannot be deleted through self-service account deletion.
+            </p>
           ) : (
-            <form onSubmit={handleDelete} className="mt-4 space-y-3 animate-slide-up">
-              <div>
-                <label className="block text-sm font-medium text-slate-600 dark:text-slate-400">
-                  Type <span className="font-mono font-semibold">DELETE</span> to confirm
-                </label>
-                <input
-                  required
-                  value={confirmText}
-                  onChange={(e) => setConfirmText(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-600 dark:text-slate-400">
-                  Confirm your password
-                </label>
-                <input
-                  required
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-              </div>
+            <>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                Permanently delete your account. This cannot be undone.
+              </p>
 
-              {deleteError && <p className="text-sm text-red-600 dark:text-red-400">{deleteError}</p>}
+              {!deleteOpen ? (
+                <button
+                  onClick={() => setDeleteOpen(true)}
+                  className="mt-4 rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 transition-colors duration-200 hover:bg-red-100 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
+                >
+                  Delete my account
+                </button>
+              ) : (
+                <form onSubmit={handleDelete} className="mt-4 space-y-3 animate-slide-up">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-600 dark:text-slate-400">
+                      Type <span className="font-mono font-semibold">DELETE</span> to confirm
+                    </label>
+                    <input
+                      required
+                      value={confirmText}
+                      onChange={(e) => setConfirmText(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-600 dark:text-slate-400">
+                      Confirm your password
+                    </label>
+                    <input
+                      required
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    />
+                  </div>
 
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteOpen(false);
-                    setConfirmText("");
-                    setPassword("");
-                    setDeleteError(null);
-                  }}
-                  className="rounded-md border border-slate-300 px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  disabled={confirmText !== "DELETE" || deleting}
-                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-red-500 disabled:opacity-50"
-                >
-                  {deleting ? "Deleting..." : "Permanently delete account"}
-                </button>
-              </div>
-            </form>
+                  {deleteError && <p className="text-sm text-red-600 dark:text-red-400">{deleteError}</p>}
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeleteOpen(false);
+                        setConfirmText("");
+                        setPassword("");
+                        setDeleteError(null);
+                      }}
+                      className="rounded-md border border-slate-300 px-4 py-2 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      disabled={confirmText !== "DELETE" || deleting}
+                      className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors duration-200 hover:bg-red-500 disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Permanently delete account"}
+                    </button>
+                  </div>
+                </form>
+              )}
+            </>
           )}
         </div>
       </div>

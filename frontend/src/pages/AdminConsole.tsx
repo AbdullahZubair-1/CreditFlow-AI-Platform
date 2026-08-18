@@ -42,6 +42,7 @@ export default function AdminConsole() {
   }, [selectedAccountId]);
 
   const filteredAccounts = accounts.filter((a) => a.name.toLowerCase().includes(search.toLowerCase()));
+  const totalRevenueCents = accounts.reduce((sum, a) => sum + a.total_revenue_cents, 0);
 
   async function confirmRevoke() {
     if (!revokeTarget) return;
@@ -61,6 +62,15 @@ export default function AdminConsole() {
         SuperAdmin Console
       </h1>
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard label="Total platform revenue" value={`$${(totalRevenueCents / 100).toFixed(2)}`} />
+        <StatCard label="Accounts" value={accounts.length.toString()} />
+        <StatCard
+          label="Paying accounts"
+          value={accounts.filter((a) => a.total_revenue_cents > 0).length.toString()}
+        />
+      </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-1">
@@ -86,6 +96,11 @@ export default function AdminConsole() {
                 <span className="ml-2 text-xs text-slate-500">
                   {a.type} · {a.plan_tier}
                 </span>
+                {a.total_revenue_cents > 0 && (
+                  <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400">
+                    ${(a.total_revenue_cents / 100).toFixed(2)}
+                  </span>
+                )}
               </button>
             ))}
             {filteredAccounts.length === 0 && <p className="text-sm text-slate-500">No accounts found.</p>}
@@ -110,6 +125,36 @@ export default function AdminConsole() {
                       : "—"
                   }
                 />
+                <StatCard
+                  label="Revenue"
+                  value={overview ? `$${(overview.total_revenue_cents / 100).toFixed(2)}` : "—"}
+                />
+              </div>
+
+              <h2 className="mt-8 text-lg font-semibold">Owner profile</h2>
+              <div className="mt-3 rounded-lg border border-slate-200 dark:border-slate-800 p-4 text-sm">
+                {overview?.owner_email ? (
+                  <div className="space-y-1">
+                    <p>
+                      <span className="text-slate-500 dark:text-slate-400">Email: </span>
+                      {overview.owner_email}
+                    </p>
+                    <p>
+                      <span className="text-slate-500 dark:text-slate-400">Verified: </span>
+                      {overview.owner_email_verified ? (
+                        <span className="text-emerald-600 dark:text-emerald-400">Yes</span>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400">No</span>
+                      )}
+                    </p>
+                    <p>
+                      <span className="text-slate-500 dark:text-slate-400">Signed up: </span>
+                      {overview.owner_created_at ? new Date(overview.owner_created_at).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-slate-500">Owner profile unavailable.</p>
+                )}
               </div>
 
               <h2 className="mt-8 text-lg font-semibold">Active sessions</h2>

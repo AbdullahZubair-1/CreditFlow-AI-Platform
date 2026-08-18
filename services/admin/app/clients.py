@@ -40,3 +40,22 @@ async def get_balance(account_id: str) -> dict | None:
 
 async def get_usage_summary(account_id: str) -> dict | None:
     return await _get_or_none(f"{settings.usage_service_url}/internal/accounts/{account_id}/summary")
+
+
+async def get_account_owner(account_id: str) -> dict | None:
+    return await _get_or_none(f"{settings.user_tenant_service_url}/internal/accounts/{account_id}/owner")
+
+
+async def get_user(user_id: str) -> dict | None:
+    return await _get_or_none(f"{settings.auth_service_url}/internal/users/{user_id}")
+
+
+async def get_revenue_by_account() -> dict[str, int]:
+    """Returns {account_id: total_revenue_cents} for every account with at
+    least one paid invoice — a single grouped query on Billing's side
+    rather than one call per account, since the SuperAdmin directory
+    needs every account's figure at once."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(f"{settings.billing_service_url}/internal/revenue")
+        response.raise_for_status()
+        return {row["account_id"]: row["total_revenue_cents"] for row in response.json()}

@@ -2,7 +2,7 @@ import uuid
 
 import stripe
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import stripe_client
@@ -52,6 +52,22 @@ async def internal_get_subscription(account_id: uuid.UUID, session: AsyncSession
     if not subscription:
         raise ApiError("not_found", "No subscription found for this account.", 404)
     return {"account_id": str(account_id), "plan_tier": subscription.plan_tier, "status": subscription.status}
+
+
+@router.get("/internal/revenue")
+async def internal_get_revenue(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Service-to-service only — backs the Admin/Ops Service's SuperAdmin
+    revenue view (both the per-account breakdown and the platform-wide
+    total, which the Admin Service computes by summing this list rather
+    than needing a second endpoint). One grouped query rather than N
+    per-account calls, unlike the other /internal/* lookups here, since
+    the SuperAdmin directory needs every account's figure at once."""
+    rows = await session.execute(
+        select(Invoice.account_id, func.sum(Invoice.amount_cents))
+        .where(Invoice.status == "paid")
+        .group_by(Invoice.account_id)
+    )
+    return [{"account_id": str(account_id), "total_revenue_cents": total} for account_id, total in rows.all()]
 
 
 @router.get("/subscription", response_model=SubscriptionResponse)

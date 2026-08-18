@@ -16,6 +16,7 @@ class AccountDirectoryEntry(BaseModel):
     name: str
     type: str
     plan_tier: str
+    total_revenue_cents: int = 0
 
 
 class AccountOverviewResponse(BaseModel):
@@ -28,6 +29,10 @@ class AccountOverviewResponse(BaseModel):
     credit_balance: int | None = None
     usage_this_period_tokens: int | None = None
     usage_quota_tokens: int | None = None
+    total_revenue_cents: int = 0
+    owner_email: str | None = None
+    owner_email_verified: bool | None = None
+    owner_created_at: str | None = None
 
 
 class AuditLogEntryResponse(BaseModel):

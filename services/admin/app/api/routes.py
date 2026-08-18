@@ -18,20 +18,30 @@ router = APIRouter()
 async def list_accounts(identity: Identity = Depends(require_identity)) -> list[AccountDirectoryEntry]:
     """SuperAdmin-only cross-account directory."""
     require_superadmin(identity)
-    accounts = await clients.list_all_accounts()
-    return [AccountDirectoryEntry(**a) for a in accounts]
+    accounts, revenue_by_account = await clients.list_all_accounts(), await clients.get_revenue_by_account()
+    return [
+        AccountDirectoryEntry(**a, total_revenue_cents=revenue_by_account.get(a["account_id"], 0))
+        for a in accounts
+    ]
 
 
 @router.get("/admin/accounts/{account_id}/overview", response_model=AccountOverviewResponse)
 async def get_account_overview(account_id: str, identity: Identity = Depends(require_identity)) -> AccountOverviewResponse:
     require_access_to_account(identity, account_id)
 
-    summary, subscription, balance, usage = (
+    summary, subscription, balance, usage, revenue_by_account, owner = (
         await clients.get_account_summary(account_id),
         await clients.get_subscription(account_id),
         await clients.get_balance(account_id),
         await clients.get_usage_summary(account_id),
+        await clients.get_revenue_by_account(),
+        await clients.get_account_owner(account_id),
     )
+
+    # The owner's profile lives in Auth, keyed by user_id — User/Tenant's
+    # owner-lookup gives us that id, then a second call resolves it to the
+    # email/verification/signup info the SuperAdmin console actually shows.
+    owner_user = await clients.get_user(owner["user_id"]) if owner else None
 
     return AccountOverviewResponse(
         account_id=account_id,
@@ -43,6 +53,10 @@ async def get_account_overview(account_id: str, identity: Identity = Depends(req
         credit_balance=balance.get("balance") if balance else None,
         usage_this_period_tokens=usage.get("used_tokens") if usage else None,
         usage_quota_tokens=usage.get("quota_tokens") if usage else None,
+        total_revenue_cents=revenue_by_account.get(account_id, 0),
+        owner_email=owner_user.get("email") if owner_user else None,
+        owner_email_verified=owner_user.get("email_verified") if owner_user else None,
+        owner_created_at=owner_user.get("created_at") if owner_user else None,
     )
 
 

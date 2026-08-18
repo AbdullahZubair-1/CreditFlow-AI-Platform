@@ -140,7 +140,7 @@ async def _check_thresholds(account_id: uuid.UUID, period: str, used: int, quota
         await _publish_threshold_reached(str(account_id), threshold, used, quota)
 
 
-async def _handle_subscription_updated(payload: dict[str, Any]) -> None:
+async def _handle_plan_changed(payload: dict[str, Any]) -> None:
     data = payload["data"]
     account_id = uuid.UUID(data["account_id"])
     plan_tier = data.get("plan_tier")
@@ -162,14 +162,24 @@ async def start_consumers() -> None:
     generation_queue = await declare_durable_queue_with_dlx(
         channel, AI_EVENTS_EXCHANGE, GENERATION_QUEUE, routing_keys=["ai.generation_completed"]
     )
+    # subscription.downgraded (dunning's expired-grace-period downgrade,
+    # and a refund's cancel-and-downgrade — see services/billing/app/
+    # dunning.py and app/api/routes.py's create_refund) carries the exact
+    # same {account_id, plan_tier} shape as subscription.updated, but was
+    # never bound here at all — this service's own local AccountPlan quota
+    # cache (see app/quota.py) stayed on the old, higher-tier quota even
+    # after the account was actually downgraded everywhere else.
     plan_queue = await declare_durable_queue_with_dlx(
-        channel, BILLING_EVENTS_EXCHANGE, PLAN_QUEUE, routing_keys=["subscription.updated"]
+        channel,
+        BILLING_EVENTS_EXCHANGE,
+        PLAN_QUEUE,
+        routing_keys=["subscription.updated", "subscription.downgraded"],
     )
 
     await consume(
         channel, generation_queue, AI_EVENTS_EXCHANGE, _handle_generation_completed, _is_processed, _mark_processed
     )
     await consume(
-        channel, plan_queue, BILLING_EVENTS_EXCHANGE, _handle_subscription_updated, _is_processed, _mark_processed
+        channel, plan_queue, BILLING_EVENTS_EXCHANGE, _handle_plan_changed, _is_processed, _mark_processed
     )
     logger.info("usage consumers listening on %s and %s", GENERATION_QUEUE, PLAN_QUEUE)

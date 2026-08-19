@@ -19,6 +19,7 @@ from app.schemas import (
     DirectCreditPurchaseRequest,
     InvoiceResponse,
     OneTimeCheckoutRequest,
+    PlanChangeResponse,
     PlanResponse,
     RefundRequest,
     RefundResponse,
@@ -212,12 +213,12 @@ async def create_credit_purchase_checkout_session(
     return CheckoutSessionResponse(checkout_url=checkout_url)
 
 
-@router.patch("/subscription", response_model=SubscriptionResponse)
+@router.patch("/subscription", response_model=PlanChangeResponse)
 async def update_subscription(
     body: UpdateSubscriptionRequest,
     identity: Identity = Depends(require_identity),
     session: AsyncSession = Depends(get_session),
-) -> SubscriptionResponse:
+) -> PlanChangeResponse:
     _require_owner(identity)
 
     subscription = await session.scalar(
@@ -234,17 +235,72 @@ async def update_subscription(
     if body.plan not in PLAN_PRICE_IDS or PLAN_PRICE_IDS[body.plan] is None:
         raise ApiError("invalid_plan", f"Unknown or non-purchasable plan '{body.plan}'.", 400)
 
+    # Idempotent no-op: a double-submit of the same target plan (e.g. a
+    # double click before the button disabled) must not re-run a downgrade's
+    # wallet credit a second time, or send the browser to a second upgrade
+    # checkout for a plan it's already on.
+    if subscription.plan_tier == body.plan:
+        return PlanChangeResponse(subscription=_to_subscription_response(subscription))
+
     try:
-        stripe_client.modify_subscription(subscription.stripe_subscription_id, body.plan)
+        price_delta_cents = stripe_client.preview_plan_change(subscription.stripe_subscription_id, body.plan)
     except stripe.error.StripeError as exc:  # noqa: BLE001
         raise ApiError("stripe_error", str(exc), 502) from exc
 
+    if price_delta_cents > 0:
+        # Upgrade — collect the exact prorated difference via a real
+        # Checkout page first; the plan itself only switches once that
+        # payment's webhook actually confirms success (see
+        # _apply_checkout_session_completed's "plan_upgrade" branch).
+        # Applying the plan change here and hoping the background charge
+        # succeeds (the old behavior) meant a declined card still got the
+        # new tier's features and credits immediately.
+        billing_account = await session.get(BillingAccount, uuid.UUID(identity.account_id))
+        checkout_url = stripe_client.create_one_time_checkout_session(
+            billing_account.stripe_customer_id,
+            price_delta_cents,
+            "usd",
+            f"Upgrade to CreditFlow {body.plan.title()}",
+            {"purpose": "plan_upgrade", "account_id": identity.account_id, "new_plan": body.plan},
+            body.success_url,
+            body.cancel_url,
+        )
+        return PlanChangeResponse(checkout_url=checkout_url)
+
+    # Downgrade — applies immediately (nothing to wait on: we're giving
+    # money back, not collecting it). price_delta_cents is Stripe's own
+    # exact proration credit for the unused time on the pricier plan;
+    # 95% of it goes to the account's wallet (see Credits' WalletLedger),
+    # matching this platform's existing 95%-refunded/5%-retained policy
+    # (REFUND_RATE, used identically for the 7-day invoice refund above).
+    stripe_client.modify_subscription(subscription.stripe_subscription_id, body.plan, proration_behavior="none")
     subscription.plan_tier = body.plan
+
+    credit_cents = -price_delta_cents
+    wallet_credit_cents = int(credit_cents * REFUND_RATE) if credit_cents > 0 else 0
+    if wallet_credit_cents > 0:
+        add_outbox_event(
+            session,
+            "plan.downgrade_credited",
+            {
+                "account_id": identity.account_id,
+                "wallet_credit_cents": wallet_credit_cents,
+                "reference_id": str(uuid.uuid4()),
+            },
+        )
+
     add_outbox_event(
         session, "subscription.updated", {"account_id": identity.account_id, "plan_tier": body.plan}
     )
     await session.commit()
 
+    return PlanChangeResponse(
+        subscription=_to_subscription_response(subscription),
+        wallet_credit_cents=wallet_credit_cents or None,
+    )
+
+
+def _to_subscription_response(subscription: Subscription) -> SubscriptionResponse:
     return SubscriptionResponse(
         account_id=str(subscription.account_id),
         plan_tier=subscription.plan_tier,
@@ -321,38 +377,24 @@ async def create_refund(
         raise ApiError("already_refunded", "This invoice has already been refunded.", 409)
 
     # 95% of the original charge — the remaining 5% is a retained
-    # processing/cancellation fee, not refunded.
+    # processing/cancellation fee, not refunded. Credited to the account's
+    # wallet (see Credits' WalletLedger) rather than reversed back onto the
+    # original card: no Stripe refund is created here at all, since there's
+    # no money actually leaving Stripe to a payment method to track.
     refund_amount_cents = int(invoice.amount_cents * REFUND_RATE)
-
-    try:
-        # Stripe's 2025-03-31 "Basil" API version removed the Invoice
-        # object's top-level payment_intent field (an invoice can now have
-        # multiple partial payments) — the payment intent for a payment now
-        # only resolves through the expanded payments list.
-        stripe_invoice = stripe.Invoice.retrieve(
-            invoice.stripe_invoice_id, expand=["payments.data.payment.payment_intent"]
-        )
-        payments = stripe_invoice["payments"]["data"]
-        if not payments:
-            raise ApiError("stripe_error", "This invoice has no recorded payment to refund.", 502)
-        payment_intent_id = payments[0]["payment"]["payment_intent"]["id"]
-        refund = stripe_client.create_refund(payment_intent_id, refund_amount_cents, body.reason)
-    except stripe.error.StripeError as exc:  # noqa: BLE001
-        raise ApiError("stripe_error", str(exc), 502) from exc
 
     refund_row = Refund(
         account_id=uuid.UUID(identity.account_id),
         invoice_id=invoice.id,
-        stripe_refund_id=refund.id,
-        amount_cents=refund.amount,
+        amount_cents=refund_amount_cents,
         reason=body.reason,
     )
     session.add(refund_row)
+    await session.flush()
 
-    # Refunds are triggered by us (not learned from a webhook), so the
-    # refund.issued domain event is written to the outbox right here, in
-    # the same transaction as the refund row — the Credits Service (a
-    # later slice) will consume it to claw back any associated grant.
+    # Refunds are triggered by us (not learned from a webhook), so both
+    # domain events are written to the outbox right here, in the same
+    # transaction as the refund row.
     #
     # invoice_id here MUST be the Stripe invoice id, not this row's own
     # internal UUID: the original purchase_grant ledger entry (see
@@ -361,13 +403,27 @@ async def create_refund(
     # Publishing the internal UUID instead meant Credits' clawback lookup
     # (keyed on that same reference_id) could never find the grant it was
     # supposed to claw back — every refund silently no-op'd the clawback.
+    # This claws back the plan's credit grant; it's a separate concern from
+    # the wallet credit below, which is the actual money changing hands.
     add_outbox_event(
         session,
         "refund.issued",
         {
             "account_id": identity.account_id,
             "invoice_id": invoice.stripe_invoice_id,
-            "amount_cents": refund.amount,
+            "amount_cents": refund_amount_cents,
+        },
+    )
+    add_outbox_event(
+        session,
+        "invoice.refund_credited",
+        {
+            "account_id": identity.account_id,
+            "wallet_credit_cents": refund_amount_cents,
+            # This invoice can only ever be refunded once (see
+            # existing_refund above), so its own id is already a stable,
+            # unique idempotency key — no need to mint a fresh one.
+            "reference_id": str(invoice.id),
         },
     )
 

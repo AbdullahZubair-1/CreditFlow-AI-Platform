@@ -37,6 +37,7 @@ export default function BillingInvoices() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [walletCreditMessage, setWalletCreditMessage] = useState<string | null>(null);
   const [busyPlan, setBusyPlan] = useState<string | null>(null);
   const [refundTarget, setRefundTarget] = useState<Invoice | null>(null);
   const [refunding, setRefunding] = useState(false);
@@ -54,10 +55,23 @@ export default function BillingInvoices() {
   async function handleSelectPlan(tier: string) {
     if (tier === "free") return;
     setError(null);
+    setWalletCreditMessage(null);
     setBusyPlan(tier);
     try {
       if (subscription && subscription.plan_tier !== "free") {
-        await updateSubscription(tier);
+        const result = await updateSubscription(tier);
+        if (result.checkout_url) {
+          // Upgrading — redirect to pay the prorated difference; the plan
+          // itself doesn't switch until that payment's webhook confirms,
+          // so there's nothing to refresh here yet.
+          window.location.href = result.checkout_url;
+          return;
+        }
+        if (result.wallet_credit_cents) {
+          setWalletCreditMessage(
+            `$${(result.wallet_credit_cents / 100).toFixed(2)} was credited to your wallet for the unused time on your previous plan.`
+          );
+        }
         refresh();
       } else {
         const { checkout_url } = await createCheckoutSession(tier);
@@ -75,7 +89,10 @@ export default function BillingInvoices() {
     setRefunding(true);
     setError(null);
     try {
-      await createRefund(refundTarget.id);
+      const refund = await createRefund(refundTarget.id);
+      setWalletCreditMessage(
+        `$${(refund.amount_cents / 100).toFixed(2)} was credited to your wallet for this invoice's refund.`
+      );
       // Re-fetch rather than guess the new state locally — refunded_amount_cents
       // is real, server-computed data (and a refund can also downgrade the
       // plan, see subscription below), so this is the source of truth,
@@ -100,6 +117,11 @@ export default function BillingInvoices() {
       )}
       {params.get("checkout") === "cancelled" && (
         <p className="mt-4 rounded-md bg-slate-100 dark:bg-slate-800 px-4 py-2 text-sm text-slate-500 dark:text-slate-400">Checkout was cancelled.</p>
+      )}
+      {walletCreditMessage && (
+        <p className="mt-4 rounded-md bg-emerald-500/10 px-4 py-2 text-sm text-emerald-600 dark:text-emerald-400">
+          {walletCreditMessage}
+        </p>
       )}
       {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
@@ -157,6 +179,7 @@ export default function BillingInvoices() {
           <tbody>
             {invoices.map((inv) => {
               const refunded = inv.refunded_amount_cents !== null;
+              const eligible = inv.status === "paid" && isWithinRefundWindow(inv.created_at);
               return (
                 <tr key={inv.id} className="border-t border-slate-200 dark:border-slate-800">
                   <td className="px-4 py-2">{new Date(inv.created_at).toLocaleDateString()}</td>
@@ -165,21 +188,25 @@ export default function BillingInvoices() {
                   </td>
                   <td className="px-4 py-2 capitalize">{inv.status}</td>
                   <td className="px-4 py-2 text-right">
-                    {refunded ? (
+                    {refunded && (
                       <span className="text-xs text-emerald-600 dark:text-emerald-400">
-                        Refunded {((inv.refunded_amount_cents as number) / 100).toFixed(2)} {inv.currency.toUpperCase()}
+                        Refunded {((inv.refunded_amount_cents as number) / 100).toFixed(2)} {inv.currency.toUpperCase()} to wallet
                       </span>
-                    ) : inv.status === "paid" && isWithinRefundWindow(inv.created_at) && canManagePlan ? (
+                    )}
+                    {!refunded && eligible && canManagePlan && (
                       <button
+                        type="button"
                         onClick={() => setRefundTarget(inv)}
                         className="text-xs text-red-600 dark:text-red-400 hover:underline"
                       >
                         Request refund
                       </button>
-                    ) : (
-                      inv.status === "paid" && (
-                        <span className="text-xs text-slate-400 dark:text-slate-500">Refund window expired</span>
-                      )
+                    )}
+                    {!refunded && eligible && !canManagePlan && (
+                      <span className="text-xs text-slate-400 dark:text-slate-500">Only an owner/admin can request a refund</span>
+                    )}
+                    {!refunded && !eligible && inv.status === "paid" && (
+                      <span className="text-xs text-slate-400 dark:text-slate-500">Not available now — refund window expired</span>
                     )}
                   </td>
                 </tr>
@@ -201,7 +228,7 @@ export default function BillingInvoices() {
         title="Request refund"
         message={
           refundTarget
-            ? `You'll receive ${((refundTarget.amount_cents * REFUND_RATE) / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()} back (95% of ${(refundTarget.amount_cents / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()}) — a 5% processing fee is retained. This can't be undone.`
+            ? `${((refundTarget.amount_cents * REFUND_RATE) / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()} will be credited to your wallet (95% of ${(refundTarget.amount_cents / 100).toFixed(2)} ${refundTarget.currency.toUpperCase()}) — a 5% processing fee is retained. Your plan will switch to Free. This can't be undone.`
             : ""
         }
         confirmLabel={refunding ? "Refunding..." : "Refund invoice"}

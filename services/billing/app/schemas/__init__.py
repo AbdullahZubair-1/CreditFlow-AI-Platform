@@ -40,6 +40,13 @@ class CreditsPricingResponse(BaseModel):
 
 class UpdateSubscriptionRequest(BaseModel):
     plan: str
+    # Only actually used for an upgrade (the new plan costs more) — that
+    # path redirects to a real Stripe Checkout page for the price
+    # difference rather than applying immediately, so it needs somewhere
+    # to send the browser back to. A downgrade applies synchronously and
+    # never touches these.
+    success_url: str
+    cancel_url: str
 
 
 class SubscriptionResponse(BaseModel):
@@ -47,6 +54,17 @@ class SubscriptionResponse(BaseModel):
     plan_tier: str
     status: str
     grace_period_ends_at: datetime | None
+
+
+class PlanChangeResponse(BaseModel):
+    # Upgrading sets checkout_url and leaves subscription unset — the plan
+    # hasn't changed yet, and won't until that checkout's payment succeeds.
+    # Downgrading (or a same-price/no-op change) applies immediately and
+    # sets subscription instead, with wallet_credit_cents populated
+    # whenever the downgrade actually generated a wallet credit.
+    checkout_url: str | None = None
+    subscription: SubscriptionResponse | None = None
+    wallet_credit_cents: int | None = None
 
 
 class InvoiceResponse(BaseModel):

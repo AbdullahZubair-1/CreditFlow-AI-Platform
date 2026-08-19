@@ -38,7 +38,12 @@ class Invoice(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    stripe_invoice_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Real Stripe invoice ids (in_...) fit comfortably under 64 chars, but
+    # a plan-upgrade's one-time Checkout session id (cs_...) — reused here
+    # as this column's value, since that payment never generates a real
+    # Stripe invoice — runs well past it, the same overflow already fixed
+    # for CreditsLedger.reference_id in the Credits service.
+    stripe_invoice_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="usd")
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -53,7 +58,10 @@ class Refund(Base):
     invoice_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("billing.invoices.id"), nullable=True
     )
-    stripe_refund_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Null now that a refund credits the account's wallet instead of
+    # reversing the original card charge — there's no real stripe.Refund
+    # object behind it anymore to record an id for.
+    stripe_refund_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

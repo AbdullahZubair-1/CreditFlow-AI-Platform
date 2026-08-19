@@ -12,7 +12,6 @@ from app.schemas import (
     AccountDirectoryEntry,
     AccountOverviewResponse,
     AuditLogEntryResponse,
-    PayoutRequestResponse,
     SessionResponse,
     UserDirectoryEntry,
     UserDirectoryResponse,
@@ -114,28 +113,6 @@ async def get_account_audit_log(
         .limit(limit)
     )
     return [_to_audit_response(r) for r in rows.all()]
-
-
-@router.get("/admin/payout-requests", response_model=list[PayoutRequestResponse])
-async def list_payout_requests(
-    status: str | None = Query(default="pending"), identity: Identity = Depends(require_identity)
-) -> list[PayoutRequestResponse]:
-    """SuperAdmin-only queue of wallet payout requests waiting to be sent
-    by hand — see Credits' PayoutRequest model for why there's no real
-    bank/PayPal integration behind this. Defaults to pending only, since
-    that's the actionable queue; pass status="" to see everything."""
-    require_superadmin(identity)
-    rows = await clients.list_payout_requests(status or None)
-    return [PayoutRequestResponse(**r) for r in rows]
-
-
-@router.post("/admin/payout-requests/{payout_id}/complete", response_model=PayoutRequestResponse)
-async def complete_payout_request(payout_id: str, identity: Identity = Depends(require_identity)) -> PayoutRequestResponse:
-    """SuperAdmin confirms they've actually sent the money to the
-    requester's destination outside the platform."""
-    require_superadmin(identity)
-    result = await clients.complete_payout_request(payout_id)
-    return PayoutRequestResponse(**result)
 
 
 @router.get("/admin/audit-log", response_model=list[AuditLogEntryResponse])

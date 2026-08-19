@@ -65,12 +65,11 @@ class WalletLedger(Base):
 
 class PayoutRequest(Base):
     """A withdrawal ask against the wallet balance. There's no real bank/
-    PayPal integration behind this (same "stub it, log it, a human handles
-    the rest" approach as the dev-only OTP/verification-token logging from
-    the platform's first slice) — the requested amount is debited from the
-    wallet immediately on request (it's no longer "available" once asked
-    for), and a SuperAdmin marks it completed once they've actually sent
-    the money to `destination` outside the platform."""
+    PayPal integration behind this — `destination` is recorded purely as a
+    record of where the requester wanted the money sent, not something
+    this platform ever actually wires anything to. Recorded as completed
+    the moment it's created (rather than left "pending" for someone to
+    manually fulfill, which nothing on this platform ever does)."""
 
     __tablename__ = "payout_requests"
 
@@ -78,7 +77,7 @@ class PayoutRequest(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     destination: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="completed")
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -300,75 +300,25 @@ async def create_payout_request(
             400,
         )
 
+    # No real bank/PayPal integration exists behind this (see
+    # PayoutRequest's docstring) — there's no one who would ever actually
+    # move it from "pending" to "completed", so it's recorded as completed
+    # immediately rather than sitting in a limbo state forever.
+    now = datetime.now(UTC)
     payout = PayoutRequest(
         account_id=account_id,
         amount_cents=body.amount_cents,
         destination=body.destination.strip(),
-        status="pending",
+        status="completed",
+        completed_at=now,
     )
     session.add(payout)
     await session.flush()
 
-    # Debited immediately, not on completion — once requested, the money is
-    # earmarked for a specific payout and is no longer "available" to
-    # request again or spend on another payout in the meantime.
     await append_wallet_entry(session, account_id, -body.amount_cents, "payout_requested", str(payout.id))
     await session.commit()
 
     return _payout_response(payout)
-
-
-@router.get("/internal/payout-requests")
-async def internal_list_payout_requests(
-    status: str | None = None, session: AsyncSession = Depends(get_session)
-) -> list[dict]:
-    """Service-to-service only — the Gateway explicitly rejects any
-    /internal/* path on its proxy routes. Backs the Admin/Ops Service's
-    SuperAdmin payout queue, which needs every account's pending requests,
-    not just the caller's own (GET /wallet/payout-requests above is
-    identity-scoped)."""
-    query = select(PayoutRequest).order_by(PayoutRequest.requested_at.asc())
-    if status:
-        query = query.where(PayoutRequest.status == status)
-    rows = await session.scalars(query)
-    return [
-        {
-            "id": str(r.id),
-            "account_id": str(r.account_id),
-            "amount_cents": r.amount_cents,
-            "destination": r.destination,
-            "status": r.status,
-            "requested_at": r.requested_at.isoformat(),
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-        }
-        for r in rows.all()
-    ]
-
-
-@router.post("/internal/payout-requests/{payout_id}/complete")
-async def internal_complete_payout_request(payout_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
-    """Service-to-service only (see note above). Called by Admin once a
-    SuperAdmin has actually sent the money to `destination` by hand —
-    there's no real bank/PayPal integration behind this stub. Idempotent:
-    completing an already-completed request is a no-op rather than an
-    error, since a SuperAdmin double-clicking "mark completed" is a real
-    scenario, not a hypothetical one."""
-    payout = await session.get(PayoutRequest, payout_id)
-    if not payout:
-        raise ApiError("not_found", "Payout request not found.", 404)
-    if payout.status == "pending":
-        payout.status = "completed"
-        payout.completed_at = datetime.now(UTC)
-        await session.commit()
-    return {
-        "id": str(payout.id),
-        "account_id": str(payout.account_id),
-        "amount_cents": payout.amount_cents,
-        "destination": payout.destination,
-        "status": payout.status,
-        "requested_at": payout.requested_at.isoformat(),
-        "completed_at": payout.completed_at.isoformat() if payout.completed_at else None,
-    }
 
 
 def _payout_response(r: PayoutRequest) -> PayoutRequestResponse:

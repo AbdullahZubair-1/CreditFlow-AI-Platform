@@ -1,6 +1,8 @@
+import time
+
 import stripe
 
-from app.core.config import PLAN_PRICE_IDS, settings
+from app.core.config import PLAN_DISPLAY_PRICES_CENTS, PLAN_PRICE_IDS, PRICE_ID_TO_PLAN, settings
 
 stripe.api_key = settings.stripe_secret_key
 
@@ -56,29 +58,61 @@ def create_one_time_checkout_session(
     return session.url
 
 
-def modify_subscription(subscription_id: str, plan: str) -> None:
+def _subscription_item_id(subscription_id: str) -> str:
+    subscription = stripe.Subscription.retrieve(subscription_id)
+    return subscription["items"]["data"][0]["id"]
+
+
+def preview_plan_change(subscription_id: str, plan: str) -> int:
+    """The amount that should be invoiced/credited for switching to `plan`
+    right now — positive for an upgrade (a real charge), negative for a
+    downgrade (a credit for unused time on the pricier plan). Computed
+    ourselves from the subscription's own current billing period rather
+    than asking Stripe's Invoice.create_preview: that API's proration math
+    silently breaks after this subscription has ever been modified with
+    proration_behavior="none" (which every actual plan change through this
+    module uses, to avoid double-charging/crediting) — verified live
+    against a real test subscription, where a second preview kept
+    comparing against the price from *before* the last "none" change
+    instead of the subscription's real current price, netting to a
+    confidently wrong $0. A flat monthly-plan model like this one's has no
+    coupons/tiers to get right beyond simple time-proration, so computing
+    it directly sidesteps that stateful Stripe-side quirk entirely rather
+    than working around it."""
+    subscription = stripe.Subscription.retrieve(subscription_id).to_dict()
+    item = subscription["items"]["data"][0]
+    current_plan = PRICE_ID_TO_PLAN.get(item["price"]["id"])
+    if current_plan is None or plan not in PLAN_DISPLAY_PRICES_CENTS:
+        raise ValueError(f"Unknown plan(s) in change from price {item['price']['id']!r} to {plan!r}.")
+
+    period_start = item["current_period_start"]
+    period_end = item["current_period_end"]
+    remaining_fraction = max(0.0, min(1.0, (period_end - time.time()) / (period_end - period_start)))
+
+    unused_credit_cents = round(PLAN_DISPLAY_PRICES_CENTS[current_plan] * remaining_fraction)
+    new_plan_charge_cents = round(PLAN_DISPLAY_PRICES_CENTS[plan] * remaining_fraction)
+    return new_plan_charge_cents - unused_credit_cents
+
+
+def modify_subscription(subscription_id: str, plan: str, proration_behavior: str) -> None:
     price_id = PLAN_PRICE_IDS.get(plan)
     if not price_id:
         raise ValueError(f"Plan '{plan}' has no Stripe Price configured.")
 
-    subscription = stripe.Subscription.retrieve(subscription_id)
-    item_id = subscription["items"]["data"][0]["id"]
+    item_id = _subscription_item_id(subscription_id)
     stripe.Subscription.modify(
         subscription_id,
         items=[{"id": item_id, "price": price_id}],
-        # "create_prorations" (the old value) only adds proration line
-        # items to be billed on the *next* regular invoice — nothing is
-        # charged at the moment of the switch. That silently broke the
-        # product expectation that upgrading to a paid tier gets you that
-        # tier's features and credits right away: those are both driven by
-        # a real invoice.paid webhook (see services/billing/app/events.py
-        # and services/credits/app/events.py), which never fires until
-        # Stripe actually invoices something. "always_invoice" makes
-        # Stripe generate and immediately attempt payment on an invoice
-        # for the prorated difference as part of this same call, so a
-        # Pro -> Team switch charges now and unlocks/grants immediately
-        # once that payment succeeds, via the existing webhook pipeline.
-        proration_behavior="always_invoice",
+        # Callers now handle collecting/crediting the price difference
+        # themselves (a one-time Checkout for an upgrade, a wallet credit
+        # for a downgrade — see preview_plan_change and
+        # PATCH /subscription) before calling this, so Stripe must never
+        # *also* apply its own proration here — "none" is the only choice
+        # that doesn't double-charge or double-credit. "always_invoice"
+        # (the old unconditional behavior) charged/credited the customer's
+        # default payment method directly and activated the new plan
+        # regardless of whether that charge actually succeeded.
+        proration_behavior=proration_behavior,
     )
 
 

@@ -38,7 +38,12 @@ class Invoice(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    stripe_invoice_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # Real Stripe invoice ids (in_...) fit comfortably under 64 chars, but
+    # a plan-upgrade's one-time Checkout session id (cs_...) — reused here
+    # as this column's value, since that payment never generates a real
+    # Stripe invoice — runs well past it, the same overflow already fixed
+    # for CreditsLedger.reference_id in the Credits service.
+    stripe_invoice_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="usd")
     status: Mapped[str] = mapped_column(String(32), nullable=False)

@@ -674,6 +674,14 @@ Direct extension of Slice 19's plan-downgrade wallet credit — `POST /billing/r
 - Frontend: the confirm dialog and the invoice history row both now say "credited to your wallet" instead of implying a card refund; the already-existing "Refund window expired" state was relabeled "Not available now — refund window expired" per the requested wording, and a member (non-owner) now sees an explicit "Only an owner/admin can request a refund" message instead of the button silently not appearing.
 - Verified live end-to-end against a disposable test invoice (not a real user's): refunding credits exactly 95% to the wallet with the correct reason/reference_id, downgrades the plan to free, cancels the real Stripe subscription, and correctly rejects a second refund attempt on the same invoice with `already_refunded` — no real Stripe Refund object is created anywhere in the process.
 
+## Slice 21: the wallet moved to the Dashboard — it was unreachable for exactly the accounts that needed it most
+
+A direct consequence of Slices 19–20: both a plan downgrade and an invoice refund credit the wallet *and* leave the account on the Free plan in the same action — but the wallet's balance, transaction history, and payout-request form only ever lived on the Marketplace page, and `/dashboard/marketplace` requires a paid plan (`PlanGateRoute requireTier="paid"`) to even load. The exact account that just received wallet money by cancelling/downgrading was the one locked out of ever seeing or withdrawing it.
+
+- Extracted the whole wallet block into its own `WalletSection` component and moved it onto `/dashboard` (`ProtectedRoute` only — no plan gate, reachable by every logged-in member) instead of duplicating it across two pages. It renders for both the member's simple welcome view and the owner's full stat-card dashboard, since a wallet credit isn't tied to being an owner either.
+- The backend never needed a fix here — confirmed live with a synthetic account carrying no subscription/billing rows at all that `GET /credits/wallet/balance` and `POST /credits/wallet/payout-requests` already return normally (`200`/business-logic `400`, never a plan-tier `403`): the Gateway's paid-plan check is scoped specifically to `marketplace`-prefixed paths, never `wallet`-prefixed ones. This was purely a frontend placement bug.
+- Marketplace keeps its own credits balance and listings (selling still requires a paid plan, unchanged) but now links to the Dashboard for "where did my sale's money go."
+
 ## Roadmap (remaining work)
 
 - **AWS deployment** (the spec's own bonus deployment target, via a `main`-branch release-PR pipeline) was not pursued for this environment in favor of the nginx + ngrok tunnel above, which better fits a stack that's still actually running on a local machine rather than provisioned cloud infrastructure.

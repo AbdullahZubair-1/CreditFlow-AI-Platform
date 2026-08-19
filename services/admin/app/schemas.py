@@ -48,16 +48,6 @@ class UserDirectoryResponse(BaseModel):
     users: list[UserDirectoryEntry]
 
 
-class PayoutRequestResponse(BaseModel):
-    id: str
-    account_id: str
-    amount_cents: int
-    destination: str
-    status: str
-    requested_at: str
-    completed_at: str | None
-
-
 class AuditLogEntryResponse(BaseModel):
     id: str
     event_id: str

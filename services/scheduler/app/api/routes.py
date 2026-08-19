@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import RECURRENCE_CADENCES
-from app.db import get_session
-from app.identity import Identity, require_identity
+from app.core.config import RECURRENCE_CADENCES
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
 from app.models import AvailableContent, ScheduledPost
 from app.schemas import CreateScheduleRequest, RescheduleRequest, ScheduledPostResponse
 from py_shared.errors import ApiError

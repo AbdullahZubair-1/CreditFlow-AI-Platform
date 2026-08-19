@@ -6,11 +6,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import billing_client
-from app.config import CENTS_PER_CREDIT, MARKETPLACE_MIN_DISCOUNT_PERCENT, PLAN_CREDIT_GRANTS
-from app.db import get_session
-from app.identity import Identity, require_identity
-from app.ledger import get_balance, get_sellable_balance
+from app.core.config import CENTS_PER_CREDIT, MARKETPLACE_MIN_DISCOUNT_PERCENT, PLAN_CREDIT_GRANTS
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
 from app.models import CreditsLedger, MarketplaceListing, PayoutRequest, WalletLedger
 from app.schemas import (
     BalanceResponse,
@@ -24,7 +22,9 @@ from app.schemas import (
     WalletBalanceResponse,
     WalletLedgerEntryResponse,
 )
-from app.wallet import append_wallet_entry, get_wallet_balance
+from app.services import billing_client
+from app.services.ledger import get_balance, get_sellable_balance
+from app.services.wallet import append_wallet_entry, get_wallet_balance
 from py_shared.errors import ApiError
 
 router = APIRouter()

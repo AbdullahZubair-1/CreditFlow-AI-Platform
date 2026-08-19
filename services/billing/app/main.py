@@ -4,10 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes import router
-from app.db import init_db
-from app.dunning import run_dunning_scanner
-from app.events import start_consumers
-from app.outbox import run_outbox_poller
+from app.core.database import init_db
+from app.services.dunning import run_dunning_scanner
+from app.services.events import start_consumers
+from app.services.outbox import run_outbox_poller
 from py_shared.errors import install_error_handlers
 
 

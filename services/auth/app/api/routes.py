@@ -7,10 +7,9 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import events, redis_client, security, user_tenant_client
-from app.config import settings
-from app.db import get_session
-from app.identity import Identity, require_identity
+from app.core.config import settings
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
 from app.models import Credential, EmailVerificationToken, PasswordResetToken, RefreshToken, User
 from app.schemas import (
     DeleteAccountRequest,
@@ -28,6 +27,7 @@ from app.schemas import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
+from app.services import events, redis_client, security, user_tenant_client
 from py_shared.errors import ApiError
 from py_shared.jwt import decode_token, issue_access_token, issue_refresh_token
 

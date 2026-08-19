@@ -5,10 +5,10 @@ import stripe
 from fastapi import APIRouter, Depends, Header, Request, Response
 from fastapi.responses import StreamingResponse
 
-from app import cookie_auth, plan_access, redis_client, sse, webhooks
-from app.config import settings
-from app.identity import Identity, require_jwt, require_jwt_from_header_or_query
-from app.proxy import forward, get_client
+from app.services import cookie_auth, plan_access, redis_client, sse, webhooks
+from app.core.config import settings
+from app.core.identity import Identity, require_jwt, require_jwt_from_header_or_query
+from app.services.proxy import forward, get_client
 from py_shared.errors import ApiError
 
 router = APIRouter()

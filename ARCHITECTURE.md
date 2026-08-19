@@ -625,6 +625,32 @@ Added a wallet, internal to the platform rather than backed by a real payment-pr
 - Verified live end to end against a disposable synthetic test account (not real user data): seeded a wallet credit, confirmed `GET /wallet/balance`/`transactions` reflect it, requested a payout and confirmed the balance dropped by exactly that amount and the returned record shows `status: "completed"` immediately — plus the negative case (a `member`-role JWT can view the wallet but gets `403 forbidden` requesting a payout).
 - **First cut of this feature had a SuperAdmin manually review and approve each payout** (Admin's first-ever write action against another service's data, via a `/admin/payout-requests` queue) before it was simplified to instant auto-completion per direct feedback — a manual approval step implies a real ops process on the other end of it, which doesn't exist here, so a payout could sit in "Pending" forever with nothing able to move it forward. Removed entirely rather than kept as unreachable dead code.
 
+## Slice 18: every service's `app/` folder reorganized into a consistent layout
+
+Purely structural, no behavior changes: every one of the 13 services had grown into a flat pile of 8-15 `.py` files sitting directly under `app/` (`config.py`, `db.py`, `identity.py`, `events.py`, plus each service's own business-logic and outbound-HTTP-client modules, all as siblings with no grouping). Reorganized all 13 into one consistent shape:
+
+```
+app/
+  main.py                 # FastAPI app + lifespan — entrypoint, unchanged location
+  core/
+    config.py               # settings
+    database.py              # DB/Mongo engine, session factory, init_db (renamed from db.py, or from mongo.py for the one Mongo-backed service, Scraper)
+    identity.py               # the auth/JWT Depends() extraction used by every route
+  api/
+    routes.py                # already existed as its own package everywhere; unchanged
+  models.py                 # ORM models — stays a flat file (no service's model set is large enough to warrant its own package)
+  schemas.py                 # Pydantic request/response DTOs — same reasoning
+  services/
+    events.py                 # RabbitMQ publish/consume — this is where each service's actual domain rules execute, so it belongs here, not in core/
+    <everything else>           # business logic and outbound HTTP clients to sibling services (ledger.py, wallet.py, groq_client.py, stripe_client.py, linkedin_client.py, redis_client.py, crypto.py, security.py, etc.) — grouped together since for a service this size, splitting "business logic" from "thin API client" into separate layers added structure without adding clarity
+```
+
+Three services don't fit the shape exactly and were adapted rather than forced: **Gateway** has no database at all (a stateless proxy), so it has no `core/database.py`. **Notification** has no HTTP routes (a pure event consumer) and no `identity.py`/`schemas.py`, so it has no `api/` folder. **Scraper** is Mongo-backed rather than Postgres/SQLAlchemy, so its `mongo.py` was renamed to `core/database.py` (same role, different backing store) and it has no `models.py`.
+
+Mechanically, this was 13 independent, self-contained refactors — microservices don't import each other's Python modules (only HTTP), so no service's reorganization could affect another's — done via `git mv` (preserving file history) followed by fixing every internal import to the new path. The main recurring surprise across services: many files used `from app import x, y, z` (importing sibling modules by name rather than `from app.x import y`), which isn't caught by a simple `from app\.` grep and crashed the first container boot after each move with `ImportError: cannot import name 'x' from 'app'` — rewritten to `from app.services import x, y, z` (or `from app.core import ...` where relevant) once caught. Scheduler's Celery worker/beat containers needed one additional fix outside any `.py` file: `docker-compose.yml`'s `celery -A app.celery_app ...` command referenced the old flat module path directly and had to be updated to `app.services.celery_app` once that file moved.
+
+Every service was individually rebuilt and its logs checked for a clean startup (no `ImportError`/`ModuleNotFoundError`) after its reorganization; a final repo-wide grep confirmed every internal import across all 13 services now resolves to exactly one of five top-level modules (`app.api`, `app.core`, `app.models`, `app.schemas`, `app.services`) with zero remaining flat-path references. Verified live end-to-end with a real cross-service call — `GET /admin/accounts/{id}/overview` (which fans out to User/Tenant, Billing, Credits, and Usage, and itself required a working Auth session) — returning correct real data after every one of those services had been reorganized.
+
 ## Roadmap (remaining work)
 
 - **AWS deployment** (the spec's own bonus deployment target, via a `main`-branch release-PR pipeline) was not pursued for this environment in favor of the nginx + ngrok tunnel above, which better fits a stack that's still actually running on a local machine rather than provisioned cloud infrastructure.

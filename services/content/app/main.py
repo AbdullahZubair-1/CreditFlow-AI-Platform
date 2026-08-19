@@ -6,9 +6,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
-from app.config import settings
-from app.db import init_db
-from app.events import start_consumer
+from app.core.config import settings
+from app.core.database import init_db
+from app.services.events import start_consumer
 from py_shared.errors import install_error_handlers
 
 

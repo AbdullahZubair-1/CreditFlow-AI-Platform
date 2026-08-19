@@ -3,10 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
-from app import events, mongo
-from app import search as search_module
-from app.config import RECURRENCE_INTERVALS_SECONDS
-from app.identity import Identity, require_identity
+from app.core import database as mongo
+from app.core.config import RECURRENCE_INTERVALS_SECONDS
+from app.core.identity import Identity, require_identity
+from app.services import events
+from app.services import search as search_module
 from app.schemas import (
     CreateScrapeJobRequest,
     ResearchRequest,
@@ -113,7 +114,7 @@ async def research(body: ResearchRequest) -> ResearchResponse:
     route (the Gateway's _reject_internal_paths blocks public access — see
     services/gateway/app/api/routes.py). Used by AI Generation's optional
     "web research" toggle: given just a topic (no URL from the user),
-    fetches factual context via Wikipedia's API (see app/search.py's
+    fetches factual context via Wikipedia's API (see app/services/search.py's
     docstring for why that instead of a general web search) synchronously,
     so the result can be folded into the same generation request rather
     than the async scrape-job flow the rest of this service uses."""

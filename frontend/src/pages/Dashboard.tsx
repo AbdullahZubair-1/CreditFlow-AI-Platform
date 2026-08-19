@@ -5,6 +5,7 @@ import { ApiError } from "../api/client";
 import { getDashboardSummary, type DashboardSummary } from "../api/dashboard";
 import AppLayout from "../components/AppLayout";
 import StatCard from "../components/StatCard";
+import WalletSection from "../components/WalletSection";
 import { useAuth } from "../context/AuthContext";
 
 const OWNER_ROLES = new Set(["owner", "admin"]);
@@ -44,6 +45,7 @@ export default function Dashboard() {
           </Link>{" "}
           for what's scheduled.
         </p>
+        <WalletSection />
       </AppLayout>
     );
   }
@@ -91,6 +93,8 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <WalletSection />
     </AppLayout>
   );
 }

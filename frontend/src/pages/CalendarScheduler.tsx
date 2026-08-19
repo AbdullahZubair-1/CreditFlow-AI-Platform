@@ -332,12 +332,11 @@ function addDays(d: Date, n: number) {
 function buildWeekGrid(weekStart: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 }
-// Rounds up to the next 5-minute mark so "now" never lands exactly on the
-// input's min value only to be immediately invalidated by the clock
-// ticking forward a second later.
+// One minute ahead of now, not "now" itself — otherwise the input's min
+// value would be invalidated the instant the clock ticks forward a second.
 function nextValidTime(): string {
   const d = new Date();
-  d.setMinutes(Math.ceil((d.getMinutes() + 1) / 5) * 5, 0, 0); // setMinutes(60, ...) correctly rolls over to the next hour
+  d.setMinutes(d.getMinutes() + 1, 0, 0); // setMinutes(60, ...) correctly rolls over to the next hour
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 

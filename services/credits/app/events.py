@@ -10,6 +10,7 @@ from app.config import FREE_SIGNUP_BONUS_CREDITS, PLAN_CREDIT_GRANTS, settings
 from app.db import async_session_factory
 from app.ledger import append_entry, get_balance
 from app.models import CreditsLedger, MarketplaceListing, ProcessedEvent
+from app.wallet import append_wallet_entry
 from py_shared.rabbitmq import consume, declare_durable_queue_with_dlx, get_confirm_channel, get_connection, publish_event
 
 logger = logging.getLogger("credits.events")
@@ -164,6 +165,14 @@ async def _handle_marketplace_payment_completed(payload: dict[str, Any]) -> None
         buyer_entry = await append_entry(
             session, buyer_account_id, listing.credits_amount, "marketplace_purchase", str(listing_id)
         )
+        # The buyer's Stripe payment (listing.price_cents) previously just
+        # vanished into the platform's own account — the seller gave up
+        # real credits and got nothing back for them. Crediting it to the
+        # seller's wallet here, in the same transaction as the credits
+        # transfer and status flip, means it inherits the same idempotency
+        # guard above (a redelivered webhook is already a no-op before it
+        # reaches this point) with no separate reference_id check needed.
+        await append_wallet_entry(session, seller_account_id, listing.price_cents, "marketplace_sale", str(listing_id))
 
         listing.status = "sold"
         listing.buyer_account_id = buyer_account_id
@@ -178,6 +187,10 @@ async def _handle_marketplace_payment_completed(payload: dict[str, Any]) -> None
     await _publish(
         "credits.credited",
         {"account_id": str(buyer_account_id), "amount": listing.credits_amount, "reason": "marketplace_purchase"},
+    )
+    await _publish(
+        "wallet.credited",
+        {"account_id": str(seller_account_id), "amount_cents": listing.price_cents, "reason": "marketplace_sale"},
     )
     await _maybe_emit_low_balance(seller_account_id, seller_entry.balance_after)
     await _maybe_emit_low_balance(buyer_account_id, buyer_entry.balance_after)

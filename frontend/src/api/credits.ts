@@ -77,3 +77,45 @@ export function createDirectPurchaseCheckout(creditsAmount: number) {
     },
   });
 }
+
+export interface WalletBalance {
+  balance_cents: number;
+}
+
+export interface WalletLedgerEntry {
+  id: string;
+  delta_cents: number;
+  reason: string;
+  reference_id: string | null;
+  balance_after_cents: number;
+  created_at: string;
+}
+
+export interface PayoutRequest {
+  id: string;
+  account_id: string;
+  amount_cents: number;
+  destination: string;
+  status: string;
+  requested_at: string;
+  completed_at: string | null;
+}
+
+export function getWalletBalance() {
+  return apiFetch<WalletBalance>("/credits/wallet/balance");
+}
+
+export function listWalletTransactions() {
+  return apiFetch<WalletLedgerEntry[]>("/credits/wallet/transactions");
+}
+
+export function listMyPayoutRequests() {
+  return apiFetch<PayoutRequest[]>("/credits/wallet/payout-requests");
+}
+
+export function requestPayout(amountCents: number, destination: string) {
+  return apiFetch<PayoutRequest>("/credits/wallet/payout-requests", {
+    method: "POST",
+    body: { amount_cents: amountCents, destination },
+  });
+}

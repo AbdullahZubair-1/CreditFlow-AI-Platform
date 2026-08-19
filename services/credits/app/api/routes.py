@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -10,15 +11,20 @@ from app.config import CENTS_PER_CREDIT, MARKETPLACE_MIN_DISCOUNT_PERCENT, PLAN_
 from app.db import get_session
 from app.identity import Identity, require_identity
 from app.ledger import get_balance, get_sellable_balance
-from app.models import CreditsLedger, MarketplaceListing
+from app.models import CreditsLedger, MarketplaceListing, PayoutRequest, WalletLedger
 from app.schemas import (
     BalanceResponse,
     CreateListingRequest,
+    CreatePayoutRequestRequest,
     LedgerEntryResponse,
     ListingResponse,
+    PayoutRequestResponse,
     PurchaseListingRequest,
     PurchaseListingResponse,
+    WalletBalanceResponse,
+    WalletLedgerEntryResponse,
 )
+from app.wallet import append_wallet_entry, get_wallet_balance
 from py_shared.errors import ApiError
 
 router = APIRouter()
@@ -229,3 +235,149 @@ async def purchase_listing(
     await session.commit()
 
     return PurchaseListingResponse(checkout_url=checkout_url)
+
+
+@router.get("/wallet/balance", response_model=WalletBalanceResponse)
+async def get_my_wallet_balance(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> WalletBalanceResponse:
+    balance_cents = await get_wallet_balance(session, uuid.UUID(identity.account_id))
+    return WalletBalanceResponse(balance_cents=balance_cents)
+
+
+@router.get("/wallet/transactions", response_model=list[WalletLedgerEntryResponse])
+async def list_my_wallet_transactions(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> list[WalletLedgerEntryResponse]:
+    rows = await session.scalars(
+        select(WalletLedger)
+        .where(WalletLedger.account_id == uuid.UUID(identity.account_id))
+        .order_by(WalletLedger.created_at.desc())
+    )
+    return [
+        WalletLedgerEntryResponse(
+            id=str(r.id),
+            delta_cents=r.delta_cents,
+            reason=r.reason,
+            reference_id=r.reference_id,
+            balance_after_cents=r.balance_after_cents,
+            created_at=r.created_at,
+        )
+        for r in rows.all()
+    ]
+
+
+@router.get("/wallet/payout-requests", response_model=list[PayoutRequestResponse])
+async def list_my_payout_requests(
+    identity: Identity = Depends(require_identity), session: AsyncSession = Depends(get_session)
+) -> list[PayoutRequestResponse]:
+    rows = await session.scalars(
+        select(PayoutRequest)
+        .where(PayoutRequest.account_id == uuid.UUID(identity.account_id))
+        .order_by(PayoutRequest.requested_at.desc())
+    )
+    return [_payout_response(r) for r in rows.all()]
+
+
+@router.post("/wallet/payout-requests", response_model=PayoutRequestResponse, status_code=201)
+async def create_payout_request(
+    body: CreatePayoutRequestRequest,
+    identity: Identity = Depends(require_identity),
+    session: AsyncSession = Depends(get_session),
+) -> PayoutRequestResponse:
+    _require_owner_tier(identity)
+    if body.amount_cents <= 0:
+        raise ApiError("invalid_payout", "amount_cents must be positive.", 400)
+    if not body.destination.strip():
+        raise ApiError("invalid_payout", "destination is required (e.g. a PayPal email or bank details).", 400)
+
+    account_id = uuid.UUID(identity.account_id)
+    balance_cents = await get_wallet_balance(session, account_id)
+    if body.amount_cents > balance_cents:
+        raise ApiError(
+            "insufficient_balance",
+            f"Not enough wallet balance to request that payout (available: ${balance_cents / 100:.2f}).",
+            400,
+        )
+
+    payout = PayoutRequest(
+        account_id=account_id,
+        amount_cents=body.amount_cents,
+        destination=body.destination.strip(),
+        status="pending",
+    )
+    session.add(payout)
+    await session.flush()
+
+    # Debited immediately, not on completion — once requested, the money is
+    # earmarked for a specific payout and is no longer "available" to
+    # request again or spend on another payout in the meantime.
+    await append_wallet_entry(session, account_id, -body.amount_cents, "payout_requested", str(payout.id))
+    await session.commit()
+
+    return _payout_response(payout)
+
+
+@router.get("/internal/payout-requests")
+async def internal_list_payout_requests(
+    status: str | None = None, session: AsyncSession = Depends(get_session)
+) -> list[dict]:
+    """Service-to-service only — the Gateway explicitly rejects any
+    /internal/* path on its proxy routes. Backs the Admin/Ops Service's
+    SuperAdmin payout queue, which needs every account's pending requests,
+    not just the caller's own (GET /wallet/payout-requests above is
+    identity-scoped)."""
+    query = select(PayoutRequest).order_by(PayoutRequest.requested_at.asc())
+    if status:
+        query = query.where(PayoutRequest.status == status)
+    rows = await session.scalars(query)
+    return [
+        {
+            "id": str(r.id),
+            "account_id": str(r.account_id),
+            "amount_cents": r.amount_cents,
+            "destination": r.destination,
+            "status": r.status,
+            "requested_at": r.requested_at.isoformat(),
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        }
+        for r in rows.all()
+    ]
+
+
+@router.post("/internal/payout-requests/{payout_id}/complete")
+async def internal_complete_payout_request(payout_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """Service-to-service only (see note above). Called by Admin once a
+    SuperAdmin has actually sent the money to `destination` by hand —
+    there's no real bank/PayPal integration behind this stub. Idempotent:
+    completing an already-completed request is a no-op rather than an
+    error, since a SuperAdmin double-clicking "mark completed" is a real
+    scenario, not a hypothetical one."""
+    payout = await session.get(PayoutRequest, payout_id)
+    if not payout:
+        raise ApiError("not_found", "Payout request not found.", 404)
+    if payout.status == "pending":
+        payout.status = "completed"
+        payout.completed_at = datetime.now(UTC)
+        await session.commit()
+    return {
+        "id": str(payout.id),
+        "account_id": str(payout.account_id),
+        "amount_cents": payout.amount_cents,
+        "destination": payout.destination,
+        "status": payout.status,
+        "requested_at": payout.requested_at.isoformat(),
+        "completed_at": payout.completed_at.isoformat() if payout.completed_at else None,
+    }
+
+
+def _payout_response(r: PayoutRequest) -> PayoutRequestResponse:
+    return PayoutRequestResponse(
+        id=str(r.id),
+        account_id=str(r.account_id),
+        amount_cents=r.amount_cents,
+        destination=r.destination,
+        status=r.status,
+        requested_at=r.requested_at,
+        completed_at=r.completed_at,
+    )

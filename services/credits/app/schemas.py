@@ -42,3 +42,35 @@ class PurchaseListingRequest(BaseModel):
 
 class PurchaseListingResponse(BaseModel):
     checkout_url: str
+
+
+class WalletBalanceResponse(BaseModel):
+    balance_cents: int
+
+
+class WalletLedgerEntryResponse(BaseModel):
+    id: str
+    delta_cents: int
+    reason: str
+    reference_id: str | None
+    balance_after_cents: int
+    created_at: datetime
+
+
+class CreatePayoutRequestRequest(BaseModel):
+    amount_cents: int
+    # Free text rather than a structured bank/PayPal form — there's no real
+    # transfer integration behind this (see PayoutRequest's docstring), so
+    # a SuperAdmin just needs enough to know where to actually send the
+    # money by hand.
+    destination: str
+
+
+class PayoutRequestResponse(BaseModel):
+    id: str
+    account_id: str
+    amount_cents: int
+    destination: str
+    status: str
+    requested_at: datetime
+    completed_at: datetime | None

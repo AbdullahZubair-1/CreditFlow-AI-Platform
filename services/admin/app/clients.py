@@ -1,9 +1,15 @@
-"""Read-only, direct service-to-service calls to the four services that
-own the data the per-account overview aggregates — the spec's "pulled
-from Credits, Usage, and User services (read-only calls, no writes)."
-Each target exposes an /internal/* endpoint added specifically to
-support this (see those services' app/api/routes.py); the Gateway
-explicitly refuses to proxy any of them from the public internet.
+"""Direct service-to-service calls to the services that own the data the
+per-account overview aggregates — the spec's "pulled from Credits, Usage,
+and User services (read-only calls, no writes)." Each target exposes an
+/internal/* endpoint added specifically to support this (see those
+services' app/api/routes.py); the Gateway explicitly refuses to proxy any
+of them from the public internet.
+
+complete_payout_request below is the one deliberate exception to
+"read-only, no writes": marking a wallet payout completed is a genuine
+SuperAdmin action (confirming money was actually sent by hand, since
+there's no real bank/PayPal integration behind it), not a read, and
+Credits — not Admin — owns the wallet data it mutates.
 """
 import httpx
 
@@ -53,6 +59,21 @@ async def get_user(user_id: str) -> dict | None:
 async def list_all_users() -> list[dict]:
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.get(f"{settings.auth_service_url}/internal/users")
+        response.raise_for_status()
+        return response.json()
+
+
+async def list_payout_requests(status: str | None = None) -> list[dict]:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        params = {"status": status} if status else {}
+        response = await client.get(f"{settings.credits_service_url}/internal/payout-requests", params=params)
+        response.raise_for_status()
+        return response.json()
+
+
+async def complete_payout_request(payout_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(f"{settings.credits_service_url}/internal/payout-requests/{payout_id}/complete")
         response.raise_for_status()
         return response.json()
 

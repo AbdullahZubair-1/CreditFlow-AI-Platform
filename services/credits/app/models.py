@@ -44,6 +44,45 @@ class MarketplaceListing(Base):
     sold_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class WalletLedger(Base):
+    """Real money (cents), append-only — same shape and same "sum every
+    delta, never trust a cached balance_after ordering" rule as
+    CreditsLedger, just tracking cash a seller has earned from marketplace
+    sales instead of credits. Kept as its own ledger rather than folded
+    into CreditsLedger since credits and cents are different units that
+    must never be summed together."""
+
+    __tablename__ = "wallet_ledger"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    delta_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    reference_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    balance_after_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PayoutRequest(Base):
+    """A withdrawal ask against the wallet balance. There's no real bank/
+    PayPal integration behind this (same "stub it, log it, a human handles
+    the rest" approach as the dev-only OTP/verification-token logging from
+    the platform's first slice) — the requested amount is debited from the
+    wallet immediately on request (it's no longer "available" once asked
+    for), and a SuperAdmin marks it completed once they've actually sent
+    the money to `destination` outside the platform."""
+
+    __tablename__ = "payout_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    destination: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ProcessedEvent(Base):
     __tablename__ = "processed_events"
 

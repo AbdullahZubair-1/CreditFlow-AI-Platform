@@ -82,3 +82,21 @@ export function getAccountAuditLog(accountId: string, limit = 100) {
 export function getPlatformAuditLog(limit = 100) {
   return apiFetch<AuditLogEntry[]>(`/admin/audit-log?limit=${limit}`);
 }
+
+export interface PayoutRequest {
+  id: string;
+  account_id: string;
+  amount_cents: number;
+  destination: string;
+  status: string;
+  requested_at: string;
+  completed_at: string | null;
+}
+
+export function listPayoutRequests() {
+  return apiFetch<PayoutRequest[]>("/admin/payout-requests");
+}
+
+export function completePayoutRequest(payoutId: string) {
+  return apiFetch<PayoutRequest>(`/admin/payout-requests/${payoutId}/complete`, { method: "POST" });
+}

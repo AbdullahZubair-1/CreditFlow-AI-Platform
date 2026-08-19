@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
 
 import {
+  completePayoutRequest,
   getAccountAuditLog,
   getAccountOverview,
   getPlatformAuditLog,
   listAccountSessions,
   listAllAccounts,
+  listPayoutRequests,
   revokeSession,
   type AccountDirectoryEntry,
   type AccountOverview,
   type AdminSession,
   type AuditLogEntry,
+  type PayoutRequest,
 } from "../api/admin";
 import { ApiError } from "../api/client";
 import AppLayout from "../components/AppLayout";
@@ -24,14 +27,21 @@ export default function AdminConsole() {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [sessions, setSessions] = useState<AdminSession[]>([]);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [payoutRequests, setPayoutRequests] = useState<PayoutRequest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null);
+  const [completePayoutTarget, setCompletePayoutTarget] = useState<string | null>(null);
+
+  function refreshPayoutRequests() {
+    listPayoutRequests().then(setPayoutRequests).catch(() => undefined);
+  }
 
   useEffect(() => {
     listAllAccounts()
       .then(setAccounts)
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load accounts."));
     getPlatformAuditLog().then(setAuditLog).catch(() => undefined);
+    refreshPayoutRequests();
   }, []);
 
   useEffect(() => {
@@ -56,6 +66,18 @@ export default function AdminConsole() {
     }
   }
 
+  async function confirmCompletePayout() {
+    if (!completePayoutTarget) return;
+    try {
+      await completePayoutRequest(completePayoutTarget);
+      refreshPayoutRequests();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to mark payout completed.");
+    } finally {
+      setCompletePayoutTarget(null);
+    }
+  }
+
   return (
     <AppLayout>
       <h1 className="text-2xl font-semibold">
@@ -70,6 +92,50 @@ export default function AdminConsole() {
           label="Paying accounts"
           value={accounts.filter((a) => a.total_revenue_cents > 0).length.toString()}
         />
+      </div>
+
+      <h2 className="mt-8 text-lg font-semibold">Pending wallet payout requests</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Sellers' marketplace earnings, waiting to be sent by hand — mark one completed once you've actually paid it
+        out.
+      </p>
+      <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
+        <table className="w-full text-sm">
+          <thead className="bg-white dark:bg-slate-900 text-left text-slate-500 dark:text-slate-400">
+            <tr>
+              <th className="px-4 py-2">Requested</th>
+              <th className="px-4 py-2">Account</th>
+              <th className="px-4 py-2">Amount</th>
+              <th className="px-4 py-2">Destination</th>
+              <th className="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {payoutRequests.map((p) => (
+              <tr key={p.id} className="border-t border-slate-200 dark:border-slate-800">
+                <td className="px-4 py-2">{new Date(p.requested_at).toLocaleDateString()}</td>
+                <td className="px-4 py-2 font-mono text-xs">{p.account_id}</td>
+                <td className="px-4 py-2">${(p.amount_cents / 100).toFixed(2)}</td>
+                <td className="px-4 py-2">{p.destination}</td>
+                <td className="px-4 py-2 text-right">
+                  <button
+                    onClick={() => setCompletePayoutTarget(p.id)}
+                    className="text-brand-600 dark:text-brand-400 hover:underline"
+                  >
+                    Mark completed
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {payoutRequests.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                  No pending payout requests.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -219,6 +285,15 @@ export default function AdminConsole() {
         confirmLabel="Revoke session"
         onConfirm={confirmRevoke}
         onCancel={() => setRevokeTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={completePayoutTarget !== null}
+        title="Mark payout completed"
+        message="Only confirm this after you've actually sent the money to the requester's destination — this cannot be undone."
+        confirmLabel="Mark completed"
+        onConfirm={confirmCompletePayout}
+        onCancel={() => setCompletePayoutTarget(null)}
       />
     </AppLayout>
   );

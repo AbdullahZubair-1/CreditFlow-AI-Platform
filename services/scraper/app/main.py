@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes import router
-from app.events import start_consumer
-from app.mongo import init_indexes
-from app.recurring import run_recurring_loop
+from app.core.database import init_indexes
+from app.services.events import start_consumer
+from app.services.recurring import run_recurring_loop
 from py_shared.errors import install_error_handlers
 
 

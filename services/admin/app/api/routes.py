@@ -4,9 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import clients, redis_client
-from app.db import get_session
-from app.identity import Identity, require_access_to_account, require_identity, require_superadmin
+from app.core.database import get_session
+from app.core.identity import Identity, require_access_to_account, require_identity, require_superadmin
 from app.models import AuditLog
 from app.schemas import (
     AccountDirectoryEntry,
@@ -16,6 +15,7 @@ from app.schemas import (
     UserDirectoryEntry,
     UserDirectoryResponse,
 )
+from app.services import clients, redis_client
 from py_shared.errors import ApiError
 
 router = APIRouter()

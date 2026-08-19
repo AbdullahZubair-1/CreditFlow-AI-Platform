@@ -6,12 +6,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import events, groq_client, pollinations_client, pubsub, usage_client
-from app.groq_client import GroqError
-from app.config import AVAILABLE_MODELS
-from app.db import get_session
-from app.generation import run_generation
-from app.identity import Identity, require_identity
+from app.services import events, groq_client, pollinations_client, pubsub, usage_client
+from app.services.groq_client import GroqError
+from app.core.config import AVAILABLE_MODELS
+from app.core.database import get_session
+from app.services.generation import run_generation
+from app.core.identity import Identity, require_identity
 from app.models import GenerationJob, ImageGenerationJob, PromptHistory
 from app.schemas import (
     CreateGenerationRequest,

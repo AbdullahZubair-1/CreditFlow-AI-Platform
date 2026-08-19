@@ -6,12 +6,12 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import linkedin_client
-from app.config import settings
-from app.crypto import create_oauth_state, encrypt_token, verify_oauth_state
-from app.db import async_session_factory, get_session
-from app.identity import Identity, require_identity
-from app.linkedin_client import LinkedInError
+from app.services import linkedin_client
+from app.core.config import settings
+from app.utils.crypto import create_oauth_state, encrypt_token, verify_oauth_state
+from app.core.database import async_session_factory, get_session
+from app.core.identity import Identity, require_identity
+from app.services.linkedin_client import LinkedInError
 from app.models import PublishJob, SocialConnection
 from app.schemas import ConnectionStatusResponse, ConnectResponse, PublishJobResponse
 from py_shared.errors import ApiError

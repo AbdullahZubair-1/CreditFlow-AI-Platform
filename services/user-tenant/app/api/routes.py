@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import clients, events
-from app.config import settings
-from app.db import get_session
-from app.identity import Identity, require_identity
+from app.core.config import settings
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
+from app.services import clients, events
 from app.models import Account, AccountMember, Invite
 from app.schemas import (
     AcceptInviteResponse,

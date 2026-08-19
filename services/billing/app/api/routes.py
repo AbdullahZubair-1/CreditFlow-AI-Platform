@@ -377,38 +377,24 @@ async def create_refund(
         raise ApiError("already_refunded", "This invoice has already been refunded.", 409)
 
     # 95% of the original charge — the remaining 5% is a retained
-    # processing/cancellation fee, not refunded.
+    # processing/cancellation fee, not refunded. Credited to the account's
+    # wallet (see Credits' WalletLedger) rather than reversed back onto the
+    # original card: no Stripe refund is created here at all, since there's
+    # no money actually leaving Stripe to a payment method to track.
     refund_amount_cents = int(invoice.amount_cents * REFUND_RATE)
-
-    try:
-        # Stripe's 2025-03-31 "Basil" API version removed the Invoice
-        # object's top-level payment_intent field (an invoice can now have
-        # multiple partial payments) — the payment intent for a payment now
-        # only resolves through the expanded payments list.
-        stripe_invoice = stripe.Invoice.retrieve(
-            invoice.stripe_invoice_id, expand=["payments.data.payment.payment_intent"]
-        )
-        payments = stripe_invoice["payments"]["data"]
-        if not payments:
-            raise ApiError("stripe_error", "This invoice has no recorded payment to refund.", 502)
-        payment_intent_id = payments[0]["payment"]["payment_intent"]["id"]
-        refund = stripe_client.create_refund(payment_intent_id, refund_amount_cents, body.reason)
-    except stripe.error.StripeError as exc:  # noqa: BLE001
-        raise ApiError("stripe_error", str(exc), 502) from exc
 
     refund_row = Refund(
         account_id=uuid.UUID(identity.account_id),
         invoice_id=invoice.id,
-        stripe_refund_id=refund.id,
-        amount_cents=refund.amount,
+        amount_cents=refund_amount_cents,
         reason=body.reason,
     )
     session.add(refund_row)
+    await session.flush()
 
-    # Refunds are triggered by us (not learned from a webhook), so the
-    # refund.issued domain event is written to the outbox right here, in
-    # the same transaction as the refund row — the Credits Service (a
-    # later slice) will consume it to claw back any associated grant.
+    # Refunds are triggered by us (not learned from a webhook), so both
+    # domain events are written to the outbox right here, in the same
+    # transaction as the refund row.
     #
     # invoice_id here MUST be the Stripe invoice id, not this row's own
     # internal UUID: the original purchase_grant ledger entry (see
@@ -417,13 +403,27 @@ async def create_refund(
     # Publishing the internal UUID instead meant Credits' clawback lookup
     # (keyed on that same reference_id) could never find the grant it was
     # supposed to claw back — every refund silently no-op'd the clawback.
+    # This claws back the plan's credit grant; it's a separate concern from
+    # the wallet credit below, which is the actual money changing hands.
     add_outbox_event(
         session,
         "refund.issued",
         {
             "account_id": identity.account_id,
             "invoice_id": invoice.stripe_invoice_id,
-            "amount_cents": refund.amount,
+            "amount_cents": refund_amount_cents,
+        },
+    )
+    add_outbox_event(
+        session,
+        "invoice.refund_credited",
+        {
+            "account_id": identity.account_id,
+            "wallet_credit_cents": refund_amount_cents,
+            # This invoice can only ever be refunded once (see
+            # existing_refund above), so its own id is already a stable,
+            # unique idempotency key — no need to mint a fresh one.
+            "reference_id": str(invoice.id),
         },
     )
 

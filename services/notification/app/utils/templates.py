@@ -63,8 +63,8 @@ def usage_threshold_email(threshold: int, used_tokens: int, quota_tokens: int) -
 def refund_issued_email(amount_cents: int) -> tuple[str, str]:
     return (
         "Your CreditFlow refund has been issued",
-        f"<p>We've refunded ${amount_cents / 100:.2f} to your original payment method — it should appear within "
-        "5-10 business days depending on your bank. Your plan has been switched to Free.</p>",
+        f"<p>We've credited ${amount_cents / 100:.2f} to your CreditFlow wallet — you can withdraw it any time from "
+        "the Marketplace page. Your plan has been switched to Free.</p>",
     )
 
 

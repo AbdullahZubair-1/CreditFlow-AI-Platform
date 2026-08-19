@@ -224,17 +224,14 @@ async def _handle_credit_purchase_completed(payload: dict[str, Any]) -> None:
     await _maybe_emit_low_balance(account_id, entry.balance_after)
 
 
-async def _handle_plan_downgrade_credited(payload: dict[str, Any]) -> None:
-    """A Team -> Pro (or any downgrade to a cheaper plan) mid-cycle switch
-    generates a real Stripe proration credit for the unused time on the
-    pricier plan — see PATCH /subscription in the Billing service, which
-    computes wallet_credit_cents as 95% of that exact credit (the same
-    95%-refunded/5%-retained policy as the 7-day invoice refund) before
-    ever publishing this event. reference_id is a UUID Billing generates
-    once per downgrade specifically for this purpose (there's no Stripe
-    object id to reuse here, since crediting a wallet isn't itself a
-    Stripe operation), so redelivery of this event can't double-credit."""
-    data = payload["data"]
+async def _credit_wallet_from_event(data: dict[str, Any], reason: str) -> None:
+    """Shared by every Billing-originated wallet credit (a plan downgrade's
+    unused-time credit, an invoice refund) — same shape, same idempotency
+    rule: reference_id is something Billing guarantees is stable and unique
+    per credit (a fresh UUID it mints once for a downgrade, since crediting
+    a wallet isn't itself a Stripe operation with its own id to reuse; the
+    invoice's own id for a refund, since an invoice can only ever be
+    refunded once), so redelivery of the same event can't double-credit."""
     account_id = uuid.UUID(data["account_id"])
     wallet_credit_cents = data["wallet_credit_cents"]
     reference_id = data["reference_id"]
@@ -243,20 +240,34 @@ async def _handle_plan_downgrade_credited(payload: dict[str, Any]) -> None:
 
     async with async_session_factory() as session:
         already_credited = await session.scalar(
-            select(WalletLedger).where(
-                WalletLedger.reference_id == reference_id, WalletLedger.reason == "plan_downgrade_credit"
-            )
+            select(WalletLedger).where(WalletLedger.reference_id == reference_id, WalletLedger.reason == reason)
         )
         if already_credited:
             return
 
-        await append_wallet_entry(session, account_id, wallet_credit_cents, "plan_downgrade_credit", reference_id)
+        await append_wallet_entry(session, account_id, wallet_credit_cents, reason, reference_id)
         await session.commit()
 
     await _publish(
-        "wallet.credited",
-        {"account_id": str(account_id), "amount_cents": wallet_credit_cents, "reason": "plan_downgrade_credit"},
+        "wallet.credited", {"account_id": str(account_id), "amount_cents": wallet_credit_cents, "reason": reason}
     )
+
+
+async def _handle_plan_downgrade_credited(payload: dict[str, Any]) -> None:
+    """A Team -> Pro (or any downgrade to a cheaper plan) mid-cycle switch
+    generates a proration credit for the unused time on the pricier plan —
+    see PATCH /subscription in the Billing service, which computes
+    wallet_credit_cents as 95% of that exact credit (the same
+    95%-refunded/5%-retained policy as the 7-day invoice refund) before
+    ever publishing this event."""
+    await _credit_wallet_from_event(payload["data"], "plan_downgrade_credit")
+
+
+async def _handle_invoice_refund_credited(payload: dict[str, Any]) -> None:
+    """The 7-day invoice refund (see Billing's create_refund) now credits
+    the wallet instead of reversing the original card charge — same 95%
+    policy, just a different destination for the money."""
+    await _credit_wallet_from_event(payload["data"], "invoice_refund_credit")
 
 
 async def _handle_generation_completed(payload: dict[str, Any]) -> None:
@@ -309,6 +320,8 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
         await _handle_credit_purchase_completed(payload)
     elif event_type == "plan.downgrade_credited":
         await _handle_plan_downgrade_credited(payload)
+    elif event_type == "invoice.refund_credited":
+        await _handle_invoice_refund_credited(payload)
 
 
 async def _route_ai_event(payload: dict[str, Any]) -> None:
@@ -358,6 +371,7 @@ async def start_consumer() -> None:
             "marketplace.payment_completed",
             "credits.purchase_completed",
             "plan.downgrade_credited",
+            "invoice.refund_credited",
         ],
     )
     await consume(channel, queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)

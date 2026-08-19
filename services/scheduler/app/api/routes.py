@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -38,6 +38,8 @@ async def create_schedule(
         raise ApiError("invalid_recurrence", f"recurrence must be one of {sorted(RECURRENCE_CADENCES)}.", 400)
     if body.publish_at.tzinfo is None:
         raise ApiError("invalid_publish_at", "publish_at must be timezone-aware.", 400)
+    if body.publish_at <= datetime.now(UTC):
+        raise ApiError("invalid_publish_at", "publish_at must be in the future.", 400)
 
     content_id = uuid.UUID(body.content_id)
     known = await session.get(AvailableContent, content_id)
@@ -109,6 +111,8 @@ async def reschedule(
     if body.publish_at is not None:
         if body.publish_at.tzinfo is None:
             raise ApiError("invalid_publish_at", "publish_at must be timezone-aware.", 400)
+        if body.publish_at <= datetime.now(UTC):
+            raise ApiError("invalid_publish_at", "publish_at must be in the future.", 400)
         row.publish_at = body.publish_at
     if body.recurrence is not None:
         if body.recurrence not in RECURRENCE_CADENCES:

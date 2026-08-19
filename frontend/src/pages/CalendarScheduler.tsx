@@ -68,6 +68,14 @@ export default function CalendarScheduler() {
       const [hours, minutes] = scheduleTime.split(":").map(Number);
       const publishAt = new Date(selectedDate);
       publishAt.setHours(hours || 0, minutes || 0, 0, 0);
+      // The time input's min attribute only restricts today's date, and
+      // isn't enforced consistently across every browser/input method
+      // (e.g. typing digits directly) — this is the actual guarantee that
+      // a schedule request is never sent for a moment that's already passed.
+      if (publishAt.getTime() <= Date.now()) {
+        setError("That time has already passed — choose a time in the future.");
+        return;
+      }
       await createSchedule(selectedContentId, publishAt, "none");
       setSelectedDate(null);
       setSelectedContentId("");
@@ -80,6 +88,10 @@ export default function CalendarScheduler() {
 
   async function handleReschedule(post: ScheduledPost, newDate: Date) {
     setError(null);
+    if (newDate.getTime() <= Date.now()) {
+      setError("That time has already passed — choose a time in the future.");
+      return;
+    }
     try {
       await reschedule(post.id, newDate);
       refresh();
@@ -135,8 +147,6 @@ export default function CalendarScheduler() {
         </div>
       </div>
 
-      {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
-
       <div className="mt-6 grid grid-cols-7 gap-1 text-xs text-slate-500">
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
           <div key={d} className="px-2 py-1">
@@ -151,7 +161,11 @@ export default function CalendarScheduler() {
           return (
             <button
               key={day.toISOString()}
-              onClick={() => setSelectedDate(day)}
+              onClick={() => {
+                setSelectedDate(day);
+                setScheduleTime(sameDay(day, new Date()) ? nextValidTime() : "09:00");
+                setError(null);
+              }}
               className={`min-h-24 rounded-md border p-2 text-left align-top ${
                 inMonth ? "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900" : "border-slate-200 dark:border-slate-900 bg-white dark:bg-slate-950 text-slate-600"
               } hover:border-brand-500`}
@@ -223,12 +237,20 @@ export default function CalendarScheduler() {
               })}
           </div>
 
+          {isPastDay(selectedDate) ? (
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+              This date is in the past — content can only be scheduled for today or a future date.
+            </p>
+          ) : (
           <form onSubmit={handleSchedule} className="mt-4 flex flex-wrap items-end gap-3">
             <div>
               <select
                 required
                 value={selectedContentId}
-                onChange={(e) => setSelectedContentId(e.target.value)}
+                onChange={(e) => {
+                  setSelectedContentId(e.target.value);
+                  setError(null);
+                }}
                 className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
               >
                 <option value="">Choose content...</option>
@@ -247,14 +269,27 @@ export default function CalendarScheduler() {
             <input
               type="time"
               required
+              min={sameDay(selectedDate, new Date()) ? nextValidTime() : undefined}
               value={scheduleTime}
-              onChange={(e) => setScheduleTime(e.target.value)}
+              onChange={(e) => {
+                setScheduleTime(e.target.value);
+                setError(null);
+              }}
               className="rounded-md border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 px-3 py-2 text-sm outline-none"
             />
             <button className="rounded-md bg-brand-500 px-4 py-2 text-sm font-medium hover:bg-brand-400">
               Schedule
             </button>
           </form>
+          )}
+          {error && (
+            <p className="mt-3 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-500/10 dark:text-red-400">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} className="mt-0.5 h-4 w-4 shrink-0">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              {error}
+            </p>
+          )}
         </div>
       )}
 
@@ -297,6 +332,23 @@ function addDays(d: Date, n: number) {
 function buildWeekGrid(weekStart: Date): Date[] {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 }
+// Rounds up to the next 5-minute mark so "now" never lands exactly on the
+// input's min value only to be immediately invalidated by the clock
+// ticking forward a second later.
+function nextValidTime(): string {
+  const d = new Date();
+  d.setMinutes(Math.ceil((d.getMinutes() + 1) / 5) * 5, 0, 0); // setMinutes(60, ...) correctly rolls over to the next hour
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function isPastDay(day: Date): boolean {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const compareDay = new Date(day);
+  compareDay.setHours(0, 0, 0, 0);
+  return compareDay < today;
+}
+
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }

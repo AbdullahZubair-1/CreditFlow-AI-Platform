@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import redis_client
-from app.db import get_session
-from app.identity import Identity, require_identity
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
 from app.models import UsageLedger
-from app.quota import get_plan_tier, get_quota
 from app.schemas import ModelUsageSummary, PrecheckRequest, PrecheckResponse, UsageSummaryResponse
+from app.services import redis_client
+from app.services.quota import get_plan_tier, get_quota
 
 router = APIRouter()
 

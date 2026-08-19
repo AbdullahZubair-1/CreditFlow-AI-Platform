@@ -4,12 +4,12 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import storage
-from app.config import PUBLISH_ROLES
-from app.db import get_session
-from app.events import publish_content_created, publish_content_updated
-from app.identity import Identity, require_identity
+from app.core.config import PUBLISH_ROLES
+from app.core.database import get_session
+from app.core.identity import Identity, require_identity
 from app.models import Content, ContentVersion
+from app.services import storage
+from app.services.events import publish_content_created, publish_content_updated
 from app.schemas import (
     ContentResponse,
     ContentVersionResponse,

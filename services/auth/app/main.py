@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes import router
-from app.db import init_db
+from app.core.database import init_db
 from py_shared.errors import install_error_handlers
 
 

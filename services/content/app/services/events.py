@@ -1,0 +1,282 @@
+import logging
+import uuid
+from datetime import UTC, datetime
+from typing import Any
+
+import aio_pika
+from sqlalchemy import select
+
+from app.core.database import async_session_factory
+from app.models import Content, ContentVersion, ProcessedEvent
+from py_shared.rabbitmq import consume, declare_durable_queue_with_dlx, get_confirm_channel, get_connection, publish_event
+
+logger = logging.getLogger("content.events")
+
+AI_EVENTS_EXCHANGE = "ai_events"
+SCRAPER_EVENTS_EXCHANGE = "scraper_events"
+SOCIAL_EVENTS_EXCHANGE = "social_events"
+DOMAIN_EVENTS_EXCHANGE = "domain_events"
+GENERATION_QUEUE = "content.ai_generation_completed"
+SCRAPE_QUEUE = "content.scrape_completed"
+SOCIAL_QUEUE = "content.post_published"
+
+_connection: aio_pika.abc.AbstractConnection | None = None
+_channel: aio_pika.abc.AbstractChannel | None = None
+
+
+async def get_channel() -> aio_pika.abc.AbstractChannel:
+    global _connection, _channel
+    if _channel is None or _channel.is_closed:
+        _connection = await get_connection()
+        _channel = await get_confirm_channel(_connection)
+    return _channel
+
+
+def _envelope(routing_key: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event_id": str(uuid.uuid4()),
+        "event_type": routing_key,
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "data": data,
+    }
+
+
+async def _publish(routing_key: str, data: dict[str, Any]) -> None:
+    try:
+        channel = await get_channel()
+        await publish_event(channel, DOMAIN_EVENTS_EXCHANGE, routing_key, _envelope(routing_key, data))
+    except Exception:  # noqa: BLE001
+        logger.exception("failed to publish %s", routing_key)
+
+
+async def publish_content_created(content: Content) -> None:
+    await _publish("content.created", {"content_id": str(content.id), "account_id": str(content.account_id)})
+
+
+async def publish_content_updated(content: Content) -> None:
+    await _publish(
+        "content.updated",
+        {"content_id": str(content.id), "account_id": str(content.account_id), "status": content.status},
+    )
+
+
+async def _is_processed(event_id: str) -> bool:
+    async with async_session_factory() as session:
+        return await session.get(ProcessedEvent, event_id) is not None
+
+
+async def _mark_processed(event_id: str) -> None:
+    async with async_session_factory() as session:
+        session.add(ProcessedEvent(event_id=event_id))
+        await session.commit()
+
+
+def _derive_title(response_text: str) -> str:
+    """A generated post's first line is almost always its actual topic
+    ("Introduction to FastAPI") — slicing the first N characters of the
+    whole blob instead (the previous approach) cuts mid-sentence and, once
+    the AI writes more than one line, drags the body's opening words in
+    right after the title with no separation. Using the first non-empty
+    line gives a real, short topic instead."""
+    first_line = next((line.strip() for line in response_text.splitlines() if line.strip()), "")
+    if not first_line:
+        return "Untitled draft"
+    return (first_line[:77] + "...") if len(first_line) > 80 else first_line
+
+
+async def _handle_generation_completed(payload: dict[str, Any]) -> None:
+    data = payload["data"]
+    if data.get("purpose") != "post":
+        return
+
+    account_id = uuid.UUID(data["account_id"])
+    user_id = uuid.UUID(data["user_id"])
+    generation_job_id = data["generation_job_id"]
+    response_text = data.get("response_text", "")
+
+    async with async_session_factory() as session:
+        existing = await session.scalar(
+            select(Content).where(Content.source_generation_job_id == generation_job_id)
+        )
+        if existing:
+            return
+
+        # AI Generation asks Groq for a real title up front (see
+        # groq_client.generate_short_title) — the first-line heuristic
+        # below is only a fallback for when that call itself failed, not
+        # the primary path anymore.
+        title = data.get("title") or _derive_title(response_text)
+        content = Content(
+            account_id=account_id,
+            created_by_user_id=user_id,
+            title=title,
+            body=response_text,
+            status="draft",
+            source_generation_job_id=generation_job_id,
+        )
+        session.add(content)
+        await session.flush()
+
+        session.add(
+            ContentVersion(
+                content_id=content.id,
+                version_number=1,
+                title=content.title,
+                body=content.body,
+                image_url=content.image_url,
+                edited_by_user_id=user_id,
+            )
+        )
+        await session.commit()
+
+    await publish_content_created(content)
+
+
+async def _handle_scrape_completed(payload: dict[str, Any]) -> None:
+    """Turns a completed scrape into a usable draft, closing the gap where
+    Scraper's output previously had no automated path into content creation
+    — a user would otherwise have to manually copy scraped text into a
+    generation prompt."""
+    data = payload["data"]
+    account_id_raw = data.get("account_id")
+    user_id_raw = data.get("user_id")
+    if not account_id_raw or not user_id_raw:
+        logger.warning("scrape.completed missing account_id/user_id, skipping draft creation: %s", data)
+        return
+
+    document_id = data["document_id"]
+    account_id = uuid.UUID(account_id_raw)
+    user_id = uuid.UUID(user_id_raw)
+    title = data.get("title") or data.get("url", "Untitled scrape")
+    excerpt = data.get("text_excerpt", "")
+
+    async with async_session_factory() as session:
+        existing = await session.scalar(
+            select(Content).where(Content.source_scrape_document_id == document_id)
+        )
+        if existing:
+            return
+
+        content = Content(
+            account_id=account_id,
+            created_by_user_id=user_id,
+            title=title[:255],
+            body=excerpt,
+            status="draft",
+            source_scrape_document_id=document_id,
+        )
+        session.add(content)
+        await session.flush()
+
+        session.add(
+            ContentVersion(
+                content_id=content.id,
+                version_number=1,
+                title=content.title,
+                body=content.body,
+                image_url=content.image_url,
+                edited_by_user_id=user_id,
+            )
+        )
+        await session.commit()
+
+    await publish_content_created(content)
+
+
+async def _handle_image_generated(payload: dict[str, Any]) -> None:
+    """Attaches the bonus AI-generated image to the draft already created
+    for this generation_job_id (see _handle_generation_completed) — the
+    image is a follow-up action a user takes after text generation
+    finished, so it arrives as a separate event rather than as part of
+    ai.generation_completed's payload."""
+    data = payload["data"]
+    generation_job_id = data["generation_job_id"]
+    image_url = data["image_url"]
+
+    async with async_session_factory() as session:
+        content = await session.scalar(
+            select(Content).where(Content.source_generation_job_id == generation_job_id)
+        )
+        if not content:
+            logger.warning("ai.image_generated for unknown generation_job_id %s, skipping", generation_job_id)
+            return
+        if content.image_url == image_url:
+            return  # already applied (redelivery)
+
+        content.image_url = image_url
+        content.version += 1
+        session.add(
+            ContentVersion(
+                content_id=content.id,
+                version_number=content.version,
+                title=content.title,
+                body=content.body,
+                image_url=content.image_url,
+                edited_by_user_id=content.created_by_user_id,
+            )
+        )
+        await session.commit()
+
+    await publish_content_updated(content)
+
+
+async def _handle_post_published(payload: dict[str, Any]) -> None:
+    """The manual 'Publish' action in Content Studio was removed because
+    it let a user mark content 'published' without anything actually
+    having been posted anywhere — a status that lied about reality. This
+    is the real trigger: once Social Publishing confirms a scheduled post
+    actually went live on LinkedIn, that's what should flip Content's
+    status to 'published', not a button click."""
+    data = payload["data"]
+    content_id_raw = data.get("content_id")
+    if not content_id_raw:
+        return  # older/malformed event with no content_id — nothing to update
+    content_id = uuid.UUID(content_id_raw)
+
+    async with async_session_factory() as session:
+        content = await session.get(Content, content_id)
+        if not content or content.status == "published":
+            return  # content since deleted, or already applied (redelivery)
+        if content.status != "approved":
+            logger.warning(
+                "post.published for content %s with unexpected status %s, applying anyway",
+                content_id,
+                content.status,
+            )
+
+        content.status = "published"
+        await session.commit()
+
+    await publish_content_updated(content)
+
+
+async def _route_ai_event(payload: dict[str, Any]) -> None:
+    event_type = payload.get("event_type")
+    if event_type == "ai.generation_completed":
+        await _handle_generation_completed(payload)
+    elif event_type == "ai.image_generated":
+        await _handle_image_generated(payload)
+
+
+async def start_consumer() -> None:
+    channel = await get_channel()
+    queue = await declare_durable_queue_with_dlx(
+        channel,
+        AI_EVENTS_EXCHANGE,
+        GENERATION_QUEUE,
+        routing_keys=["ai.generation_completed", "ai.image_generated"],
+    )
+    await consume(channel, queue, AI_EVENTS_EXCHANGE, _route_ai_event, _is_processed, _mark_processed)
+    logger.info("content consumer listening on %s", GENERATION_QUEUE)
+
+    scrape_queue = await declare_durable_queue_with_dlx(
+        channel, SCRAPER_EVENTS_EXCHANGE, SCRAPE_QUEUE, routing_keys=["scrape.completed"]
+    )
+    await consume(channel, scrape_queue, SCRAPER_EVENTS_EXCHANGE, _handle_scrape_completed, _is_processed, _mark_processed)
+    logger.info("content consumer listening on %s", SCRAPE_QUEUE)
+
+    social_queue = await declare_durable_queue_with_dlx(
+        channel, SOCIAL_EVENTS_EXCHANGE, SOCIAL_QUEUE, routing_keys=["post.published"]
+    )
+    await consume(channel, social_queue, SOCIAL_EVENTS_EXCHANGE, _handle_post_published, _is_processed, _mark_processed)
+    logger.info("content consumer listening on %s", SOCIAL_QUEUE)

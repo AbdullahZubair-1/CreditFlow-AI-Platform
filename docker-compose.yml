@@ -225,7 +225,7 @@ services:
       context: .
       dockerfile: services/scheduler/Dockerfile
     restart: unless-stopped
-    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    command: ["celery", "-A", "app.services.celery_app", "worker", "--loglevel=info"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
@@ -243,7 +243,7 @@ services:
       context: .
       dockerfile: services/scheduler/Dockerfile
     restart: unless-stopped
-    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    command: ["celery", "-A", "app.services.celery_app", "beat", "--loglevel=info"]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-creditflow}:${POSTGRES_PASSWORD:-creditflow}@${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-creditflow}
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/

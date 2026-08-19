@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import FREE_SIGNUP_BONUS_CREDITS, PLAN_CREDIT_GRANTS, settings
 from app.core.database import async_session_factory
-from app.models import CreditsLedger, MarketplaceListing, ProcessedEvent
+from app.models import CreditsLedger, MarketplaceListing, ProcessedEvent, WalletLedger
 from app.services.ledger import append_entry, get_balance
 from app.services.wallet import append_wallet_entry
 from py_shared.rabbitmq import consume, declare_durable_queue_with_dlx, get_confirm_channel, get_connection, publish_event
@@ -224,6 +224,41 @@ async def _handle_credit_purchase_completed(payload: dict[str, Any]) -> None:
     await _maybe_emit_low_balance(account_id, entry.balance_after)
 
 
+async def _handle_plan_downgrade_credited(payload: dict[str, Any]) -> None:
+    """A Team -> Pro (or any downgrade to a cheaper plan) mid-cycle switch
+    generates a real Stripe proration credit for the unused time on the
+    pricier plan — see PATCH /subscription in the Billing service, which
+    computes wallet_credit_cents as 95% of that exact credit (the same
+    95%-refunded/5%-retained policy as the 7-day invoice refund) before
+    ever publishing this event. reference_id is a UUID Billing generates
+    once per downgrade specifically for this purpose (there's no Stripe
+    object id to reuse here, since crediting a wallet isn't itself a
+    Stripe operation), so redelivery of this event can't double-credit."""
+    data = payload["data"]
+    account_id = uuid.UUID(data["account_id"])
+    wallet_credit_cents = data["wallet_credit_cents"]
+    reference_id = data["reference_id"]
+    if wallet_credit_cents <= 0:
+        return
+
+    async with async_session_factory() as session:
+        already_credited = await session.scalar(
+            select(WalletLedger).where(
+                WalletLedger.reference_id == reference_id, WalletLedger.reason == "plan_downgrade_credit"
+            )
+        )
+        if already_credited:
+            return
+
+        await append_wallet_entry(session, account_id, wallet_credit_cents, "plan_downgrade_credit", reference_id)
+        await session.commit()
+
+    await _publish(
+        "wallet.credited",
+        {"account_id": str(account_id), "amount_cents": wallet_credit_cents, "reason": "plan_downgrade_credit"},
+    )
+
+
 async def _handle_generation_completed(payload: dict[str, Any]) -> None:
     """AI Generation only checks *quota* (Usage Service) before streaming —
     it has no notion of a credits balance. This is the other half of the
@@ -272,6 +307,8 @@ async def _route_billing_event(payload: dict[str, Any]) -> None:
         await _handle_marketplace_payment_completed(payload)
     elif event_type == "credits.purchase_completed":
         await _handle_credit_purchase_completed(payload)
+    elif event_type == "plan.downgrade_credited":
+        await _handle_plan_downgrade_credited(payload)
 
 
 async def _route_ai_event(payload: dict[str, Any]) -> None:
@@ -315,7 +352,13 @@ async def start_consumer() -> None:
         channel,
         BILLING_EVENTS_EXCHANGE,
         QUEUE_NAME,
-        routing_keys=["invoice.paid", "refund.issued", "marketplace.payment_completed", "credits.purchase_completed"],
+        routing_keys=[
+            "invoice.paid",
+            "refund.issued",
+            "marketplace.payment_completed",
+            "credits.purchase_completed",
+            "plan.downgrade_credited",
+        ],
     )
     await consume(channel, queue, BILLING_EVENTS_EXCHANGE, _route_billing_event, _is_processed, _mark_processed)
     logger.info("credits consumer listening on %s", QUEUE_NAME)

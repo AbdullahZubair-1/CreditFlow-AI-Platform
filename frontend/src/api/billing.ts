@@ -42,8 +42,22 @@ export function createCheckoutSession(plan: string) {
   });
 }
 
+export interface PlanChangeResult {
+  checkout_url: string | null;
+  subscription: Subscription | null;
+  wallet_credit_cents: number | null;
+}
+
 export function updateSubscription(plan: string) {
-  return apiFetch<Subscription>("/billing/subscription", { method: "PATCH", body: { plan } });
+  const origin = window.location.origin;
+  return apiFetch<PlanChangeResult>("/billing/subscription", {
+    method: "PATCH",
+    body: {
+      plan,
+      success_url: `${origin}/dashboard/billing?checkout=success`,
+      cancel_url: `${origin}/dashboard/billing?checkout=cancelled`,
+    },
+  });
 }
 
 export function listInvoices() {

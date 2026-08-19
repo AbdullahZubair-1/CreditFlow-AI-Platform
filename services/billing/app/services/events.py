@@ -227,6 +227,70 @@ async def _apply_checkout_session_completed(session, checkout_obj: dict[str, Any
                 "checkout_session_id": checkout_obj["id"],
             },
         )
+    elif purpose == "plan_upgrade":
+        await _apply_plan_upgrade_completed(session, checkout_obj, metadata)
+
+
+async def _apply_plan_upgrade_completed(session, checkout_obj: dict[str, Any], metadata: dict[str, str]) -> None:
+    """The other half of PATCH /subscription's upgrade path (see
+    services/billing/app/api/routes.py) — that endpoint only ever creates
+    a Checkout Session for the prorated price difference, never touches
+    the actual subscription. The plan switch itself, and the new tier's
+    credit grant, only happen here, once Stripe confirms this payment
+    actually succeeded."""
+    account_id = uuid.UUID(metadata["account_id"])
+    new_plan = metadata["new_plan"]
+
+    # Idempotency: the checkout session id doubles as this Invoice's
+    # stripe_invoice_id (it isn't a real Stripe invoice — this is a
+    # one-time payment, not a subscription invoice — but reusing the same
+    # column/uniqueness the way credit_purchase reuses it as Credits'
+    # reference_id means redelivery of this webhook can't apply the
+    # upgrade or grant its credits twice).
+    existing = await session.scalar(select(Invoice).where(Invoice.stripe_invoice_id == checkout_obj["id"]))
+    if existing:
+        return
+
+    subscription = await session.scalar(select(Subscription).where(Subscription.account_id == account_id))
+    if not subscription or not subscription.stripe_subscription_id:
+        return
+
+    stripe_client.modify_subscription(subscription.stripe_subscription_id, new_plan, proration_behavior="none")
+    subscription.plan_tier = new_plan
+    subscription.status = "active"
+
+    session.add(
+        Invoice(
+            account_id=account_id,
+            stripe_invoice_id=checkout_obj["id"],
+            amount_cents=checkout_obj["amount_total"],
+            currency=checkout_obj["currency"],
+            status="paid",
+        )
+    )
+
+    add_outbox_event(
+        session,
+        "invoice.paid",
+        {
+            "account_id": str(account_id),
+            "invoice_id": checkout_obj["id"],
+            "amount_cents": checkout_obj["amount_total"],
+            # the Credits Service maps plan_tier -> credits granted, same
+            # as a normal renewal invoice — an upgrade unlocks the new
+            # tier's full credit grant immediately, not a prorated slice.
+            "plan_tier": new_plan,
+        },
+    )
+    # Published immediately rather than only relying on the separate,
+    # independently-delivered customer.subscription.updated webhook that
+    # the modify_subscription call above will also eventually trigger —
+    # same reasoning as the downgrade path in PATCH /subscription: every
+    # other service reacting to a plan change (User/Tenant's feature
+    # gates, Usage's quota) shouldn't wait on a second webhook round-trip.
+    add_outbox_event(
+        session, "subscription.updated", {"account_id": str(account_id), "plan_tier": new_plan}
+    )
 
 
 async def _apply_payment_failed(session, invoice_obj: dict[str, Any]) -> None:

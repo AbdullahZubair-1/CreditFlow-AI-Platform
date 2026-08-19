@@ -27,7 +27,8 @@ from app.schemas import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from app.services import events, redis_client, security, user_tenant_client
+from app.services import events, redis_client, user_tenant_client
+from app.utils import security
 from py_shared.errors import ApiError
 from py_shared.jwt import decode_token, issue_access_token, issue_refresh_token
 

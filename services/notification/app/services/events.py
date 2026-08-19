@@ -3,7 +3,8 @@ from typing import Any
 
 import aio_pika
 
-from app.services import identity_resolver, notify, slack_client, templates
+from app.services import identity_resolver, notify, slack_client
+from app.utils import templates
 from app.core.database import async_session_factory
 from app.services.identity_resolver import ResolutionError
 from app.models import ProcessedEvent

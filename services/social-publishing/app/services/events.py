@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy import update
 
 from app.services import content_client, linkedin_client
-from app.services.crypto import decrypt_token
+from app.utils.crypto import decrypt_token
 from app.core.database import async_session_factory
 from app.services.linkedin_client import LinkedInError
 from app.models import PostMedia, ProcessedEvent, PublishJob, SocialConnection

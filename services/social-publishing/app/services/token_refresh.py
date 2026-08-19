@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from app.services import linkedin_client
 from app.core.config import settings
-from app.services.crypto import decrypt_token, encrypt_token
+from app.utils.crypto import decrypt_token, encrypt_token
 from app.core.database import async_session_factory
 from app.services.linkedin_client import LinkedInError
 from app.models import SocialConnection

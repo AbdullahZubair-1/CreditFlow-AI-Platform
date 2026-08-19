@@ -6,7 +6,7 @@ from app.services import events, groq_client, pubsub, scraper_client
 from app.core.database import async_session_factory
 from app.services.groq_client import GroqError
 from app.models import GenerationJob, PromptHistory
-from app.services.text_cleanup import strip_markdown
+from app.utils.text_cleanup import strip_markdown
 
 logger = logging.getLogger("ai_generation.generation")
 
